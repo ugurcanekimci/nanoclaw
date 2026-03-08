@@ -554,16 +554,32 @@ async function main(): Promise<void> {
       return channel.sendMessage(jid, text);
     },
     injectPrompt: (chatJid, text, sender) => {
-      // Store as a synthetic inbound message (not from bot, not from self) so
-      // getNewMessages() picks it up and triggers the target group's agent session.
+      // NIT: Sanitize content — strip any leading "Claude: " / "Andy: " bot prefix
+      // so the content NOT LIKE 'Claude:%' SQL filter doesn't swallow the message.
+      const botPrefixRe = new RegExp(`^${ASSISTANT_NAME}:\\s*`, 'i');
+      const safeText = text.replace(botPrefixRe, '');
+
+      // WARNING 1 FIX: Ensure IPC injections bypass the requiresTrigger gate.
+      // Non-main groups check that at least one message matches TRIGGER_PATTERN
+      // and is trusted (is_from_me OR isTriggerAllowed). We set is_from_me: true
+      // (this is a trusted system injection) and prefix content with the trigger
+      // word if it isn't already present, so the check passes without schema changes.
+      const triggerPrefix = `@${ASSISTANT_NAME} `;
+      const content = TRIGGER_PATTERN.test(safeText.trim())
+        ? safeText
+        : `${triggerPrefix}${safeText}`;
+
+      // Store as a synthetic inbound message. is_from_me: true marks it as a
+      // trusted system injection so isTriggerAllowed is not consulted.
+      // is_bot_message: false ensures getNewMessages() doesn't filter it out.
       storeMessage({
         id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         chat_jid: chatJid,
         sender,
         sender_name: sender,
-        content: text,
+        content,
         timestamp: new Date().toISOString(),
-        is_from_me: false,
+        is_from_me: true,
         is_bot_message: false,
       });
       // Wake up the message loop for this group immediately

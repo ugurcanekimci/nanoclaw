@@ -32,6 +32,25 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 
+// Rate limiter for IPC inject_prompt — tracks injection count per target group folder
+// within a rolling 60-second window. Prevents runaway loops.
+const IPC_INJECT_MAX_PER_MINUTE = 10;
+const ipcInjectCounts = new Map<string, { count: number; windowStart: number }>();
+
+function checkInjectRateLimit(targetFolder: string): boolean {
+  const now = Date.now();
+  const entry = ipcInjectCounts.get(targetFolder);
+  if (!entry || now - entry.windowStart > 60_000) {
+    ipcInjectCounts.set(targetFolder, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= IPC_INJECT_MAX_PER_MINUTE) {
+    return false;
+  }
+  entry.count++;
+  return true;
+}
+
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
@@ -98,12 +117,30 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   // without relying on a Slack round-trip (bot messages are filtered out
                   // by getNewMessages and don't trigger agent sessions).
                   if (targetGroup) {
-                    const senderName = data.sender || sourceGroup;
-                    deps.injectPrompt(data.chatJid, data.text, senderName);
-                    logger.info(
-                      { chatJid: data.chatJid, sourceGroup, sender: senderName },
-                      'IPC message injected into target session',
-                    );
+                    // WARNING 2 FIX: Block self-targeted injections (infinite loop risk)
+                    if (targetGroup.folder === sourceGroup) {
+                      logger.warn(
+                        { sourceGroup },
+                        'Blocked self-targeted IPC injection (loop prevention)',
+                      );
+                    } else if (!checkInjectRateLimit(targetGroup.folder)) {
+                      // Rate limiter: max IPC_INJECT_MAX_PER_MINUTE injections per group per minute
+                      logger.warn(
+                        { targetFolder: targetGroup.folder, sourceGroup },
+                        `IPC injection rate limit exceeded (>${IPC_INJECT_MAX_PER_MINUTE}/min) — dropping`,
+                      );
+                    } else {
+                      const senderName = data.sender || sourceGroup;
+                      deps.injectPrompt(data.chatJid, data.text, senderName);
+                      logger.info(
+                        {
+                          chatJid: data.chatJid,
+                          sourceGroup,
+                          sender: senderName,
+                        },
+                        'IPC message injected into target session',
+                      );
+                    }
                   }
                 } else {
                   logger.warn(
