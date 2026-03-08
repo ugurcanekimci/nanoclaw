@@ -12,6 +12,12 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  /**
+   * Inject a prompt directly into a target group's agent session.
+   * Stores the message in DB and wakes the message loop — no Slack round-trip needed.
+   * Used when one agent needs to trigger another agent's session (e.g., sub-agent → orchestrator).
+   */
+  injectPrompt: (chatJid: string, text: string, sender: string) => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -80,11 +86,25 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
+                  // Post to Slack (or other channel) for human visibility
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
                   );
+
+                  // If the target is a registered agent group, also inject the message
+                  // directly into that group's session so the orchestrator wakes up
+                  // without relying on a Slack round-trip (bot messages are filtered out
+                  // by getNewMessages and don't trigger agent sessions).
+                  if (targetGroup) {
+                    const senderName = data.sender || sourceGroup;
+                    deps.injectPrompt(data.chatJid, data.text, senderName);
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup, sender: senderName },
+                      'IPC message injected into target session',
+                    );
+                  }
                 } else {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },

@@ -553,6 +553,22 @@ async function main(): Promise<void> {
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
     },
+    injectPrompt: (chatJid, text, sender) => {
+      // Store as a synthetic inbound message (not from bot, not from self) so
+      // getNewMessages() picks it up and triggers the target group's agent session.
+      storeMessage({
+        id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        chat_jid: chatJid,
+        sender,
+        sender_name: sender,
+        content: text,
+        timestamp: new Date().toISOString(),
+        is_from_me: false,
+        is_bot_message: false,
+      });
+      // Wake up the message loop for this group immediately
+      queue.enqueueMessageCheck(chatJid);
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {
