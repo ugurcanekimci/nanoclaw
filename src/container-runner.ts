@@ -26,6 +26,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -236,6 +237,12 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Pass OPENAI_API_KEY if configured — allows agents to use SWARM_MODEL=gpt-4o etc.
+  const { OPENAI_API_KEY } = readEnvFile(['OPENAI_API_KEY']);
+  if (OPENAI_API_KEY) {
+    args.push('-e', `OPENAI_API_KEY=${OPENAI_API_KEY}`);
   }
 
   // Runtime-specific args for host gateway resolution
