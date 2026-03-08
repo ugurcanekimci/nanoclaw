@@ -41,15 +41,18 @@ const server = new McpServer({
 
 server.tool(
   'send_message',
-  "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
+  `Send a message to a channel immediately while you're still running. Use this for progress updates, to send multiple messages, or to report results to another channel. You can call this multiple times.
+
+By default, messages go to your own channel. Use target_jid to send to a different channel (e.g., report results back to the orchestrator).`,
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    target_jid: z.string().optional().describe('JID of the target channel to send to. Defaults to your own channel. Use this to report results to the orchestrator or other agents.'),
   },
   async (args) => {
     const data: Record<string, string | undefined> = {
       type: 'message',
-      chatJid,
+      chatJid: args.target_jid || chatJid,
       text: args.text,
       sender: args.sender || undefined,
       groupFolder,
@@ -58,7 +61,7 @@ server.tool(
 
     writeIpcFile(MESSAGES_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
+    return { content: [{ type: 'text' as const, text: `Message sent${args.target_jid ? ` to ${args.target_jid}` : ''}.` }] };
   },
 );
 

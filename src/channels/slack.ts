@@ -87,12 +87,17 @@ export class SlackChannel implements Channel {
       const timestamp = new Date(parseFloat(msg.ts) * 1000).toISOString();
       const isGroup = msg.channel_type !== 'im';
 
+      logger.debug({ jid, text: msg.text?.slice(0, 80), isGroup }, 'Slack message received');
+
       // Always report metadata for group discovery
       this.opts.onChatMetadata(jid, timestamp, undefined, 'slack', isGroup);
 
       // Only deliver full messages for registered groups
       const groups = this.opts.registeredGroups();
-      if (!groups[jid]) return;
+      if (!groups[jid]) {
+        logger.info({ jid }, 'Message in unregistered channel — use register_group from main agent');
+        return;
+      }
 
       const isBotMessage =
         !!msg.bot_id || msg.user === this.botUserId;
@@ -102,7 +107,7 @@ export class SlackChannel implements Channel {
         senderName = ASSISTANT_NAME;
       } else {
         senderName =
-          (await this.resolveUserName(msg.user)) ||
+          (msg.user ? await this.resolveUserName(msg.user) : undefined) ||
           msg.user ||
           'unknown';
       }
@@ -231,6 +236,7 @@ export class SlackChannel implements Channel {
 
         for (const ch of result.channels || []) {
           if (ch.id && ch.name && ch.is_member) {
+            logger.info({ jid: `slack:${ch.id}`, name: ch.name }, 'Discovered Slack channel');
             updateChatName(`slack:${ch.id}`, ch.name);
             count++;
           }
