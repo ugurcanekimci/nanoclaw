@@ -58,6 +58,15 @@ In addition to NanoClaw's built-in tools, agents have access to the swarm MCP se
 - For cheap sub-tasks (summarization, translation), use `ollama_generate` MCP tool if available
 - Keep tool result context under 4000 tokens — truncate and reference vault notes
 
+## Model Provider Support
+
+Agents support multiple model providers via SWARM_MODEL env var:
+- `claude-*` — Anthropic Claude API (ANTHROPIC_API_KEY required)
+- `gpt-*` / `o1-*` / `o3-*` — OpenAI API (OPENAI_API_KEY required, set in .env)
+- `ollama:*` — Local Ollama (free, no key required, use `ollama_generate` tool instead)
+
+OPENAI_API_KEY is passed to containers automatically when set in nanoclaw's .env.
+
 ## Context Efficiency
 
 - Keep responses concise
