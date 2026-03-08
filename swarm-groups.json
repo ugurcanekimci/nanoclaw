@@ -1,0 +1,97 @@
+{
+  "_comment": "NanoClaw group registration config for the swarm. Use this as a reference when registering groups via the main agent. Slack channel IDs must be filled in after creating the channels.",
+
+  "groups": [
+    {
+      "name": "Swarm Main",
+      "folder": "slack_swarm-main",
+      "trigger": "@Swarm",
+      "isMain": true,
+      "requiresTrigger": false,
+      "containerConfig": {
+        "additionalMounts": [
+          {
+            "hostPath": "/Users/u/Documents/swarm-kb",
+            "containerPath": "swarm-kb",
+            "readonly": true
+          },
+          {
+            "hostPath": "/Users/u/swarm",
+            "containerPath": "swarm-project",
+            "readonly": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "Swarm Ingest",
+      "folder": "slack_swarm-ingest",
+      "trigger": "@Swarm",
+      "requiresTrigger": true,
+      "containerConfig": {
+        "additionalMounts": [
+          {
+            "hostPath": "/Users/u/Documents/swarm-kb",
+            "containerPath": "swarm-kb",
+            "readonly": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "Swarm Research",
+      "folder": "slack_swarm-research",
+      "trigger": "@Swarm",
+      "requiresTrigger": true,
+      "containerConfig": {
+        "additionalMounts": [
+          {
+            "hostPath": "/Users/u/Documents/swarm-kb",
+            "containerPath": "swarm-kb",
+            "readonly": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "Swarm Coder",
+      "folder": "slack_swarm-coder",
+      "trigger": "@Swarm",
+      "requiresTrigger": true,
+      "containerConfig": {
+        "additionalMounts": [
+          {
+            "hostPath": "/Users/u/swarm",
+            "containerPath": "swarm-project",
+            "readonly": false
+          },
+          {
+            "hostPath": "/Users/u/Documents/swarm-kb",
+            "containerPath": "swarm-kb",
+            "readonly": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "Swarm Review",
+      "folder": "slack_swarm-review",
+      "trigger": "@Swarm",
+      "requiresTrigger": true,
+      "containerConfig": {
+        "additionalMounts": [
+          {
+            "hostPath": "/Users/u/swarm",
+            "containerPath": "swarm-project",
+            "readonly": true
+          },
+          {
+            "hostPath": "/Users/u/Documents/swarm-kb",
+            "containerPath": "swarm-kb",
+            "readonly": true
+          }
+        ]
+      }
+    }
+  ]
+}
