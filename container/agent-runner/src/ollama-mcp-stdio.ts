@@ -33,9 +33,11 @@ async function ollamaFetch(path: string, options?: RequestInit): Promise<Respons
   try {
     return await fetch(url, options);
   } catch (err) {
-    // Fallback to localhost if host.docker.internal fails
+    // On Linux Docker, host.docker.internal may not resolve — fall back to the default
+    // bridge gateway (172.17.0.1) which routes to the host. Note: localhost would resolve
+    // to the container's own loopback and is NOT a valid fallback inside a container.
     if (OLLAMA_HOST.includes('host.docker.internal')) {
-      const fallbackUrl = url.replace('host.docker.internal', 'localhost');
+      const fallbackUrl = url.replace('host.docker.internal', '172.17.0.1');
       return await fetch(fallbackUrl, options);
     }
     throw err;
