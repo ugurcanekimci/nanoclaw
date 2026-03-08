@@ -71,8 +71,8 @@ export function loadSources(): SourceConfig {
       const raw = fs.readFileSync(sourcesPath, "utf-8");
       return { ...DEFAULTS, ...JSON.parse(raw) };
     }
-  } catch {
-    // Fall back to defaults on parse error
+  } catch (err) {
+    console.error(`[sources] Failed to load ${sourcesPath}, using defaults:`, err);
   }
   return DEFAULTS;
 }

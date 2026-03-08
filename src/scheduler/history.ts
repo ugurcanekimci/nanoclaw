@@ -27,13 +27,15 @@ export function readHistory(limit = 50): HistoryEntry[] {
   if (!fs.existsSync(historyPath)) return [];
 
   const lines = fs.readFileSync(historyPath, "utf-8").trim().split("\n").filter(Boolean);
+
+  // Slice to last `limit` lines before JSON parsing to avoid processing the entire file
+  const tail = lines.slice(-limit);
   const entries: HistoryEntry[] = [];
 
-  // Read from end for most recent
-  const start = Math.max(0, lines.length - limit);
-  for (let i = lines.length - 1; i >= start; i--) {
+  // Reverse order so most recent comes first
+  for (let i = tail.length - 1; i >= 0; i--) {
     try {
-      entries.push(JSON.parse(lines[i]!));
+      entries.push(JSON.parse(tail[i]!));
     } catch {
       // Skip malformed lines
     }

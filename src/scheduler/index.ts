@@ -14,6 +14,7 @@ interface ScheduledJob {
   type: string;
   source: string;
   task: cron.ScheduledTask | null;
+  runner: () => Promise<{ items: number; errors: string[] }>;
   lastRun: string | null;
   lastResult: { items: number; errors: string[] } | null;
 }
@@ -72,24 +73,16 @@ function registerJob(
     }
   });
 
-  jobs.set(name, { name, schedule, type, source, task, lastRun: null, lastResult: null });
+  jobs.set(name, { name, schedule, type, source, task, runner, lastRun: null, lastResult: null });
+}
+
+/** Slugify a string for safe use in job names (replace non-alphanumeric with dash). */
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function registerSourceJobs(sources: SourceConfig): void {
-  for (const yt of sources.youtube) {
-    registerJob(
-      `youtube:${yt.channelId}`,
-      yt.schedule,
-      "youtube",
-      yt.name,
-      async () => {
-        // TODO: YouTube channel polling requires listing recent videos first
-        // For now, this is a placeholder — individual video URLs are ingested on demand
-        return { items: 0, errors: ["YouTube channel polling not yet implemented"] };
-      },
-    );
-  }
-
+  // X/Twitter timeline — implemented
   for (const x of sources.xAccounts) {
     registerJob(
       `x-timeline:${x.handle}`,
@@ -103,9 +96,10 @@ function registerSourceJobs(sources: SourceConfig): void {
     );
   }
 
+  // X/Twitter search — implemented
   for (const x of sources.xSearchTerms) {
     registerJob(
-      `x-search:${x.query}`,
+      `x-search:${slugify(x.query)}`,
       x.schedule,
       "x-search",
       `search:"${x.query}"`,
@@ -116,43 +110,21 @@ function registerSourceJobs(sources: SourceConfig): void {
     );
   }
 
-  for (const rss of sources.rssFeeds) {
-    registerJob(
-      `rss:${rss.name}`,
-      rss.schedule,
-      "rss",
-      rss.url,
-      async () => {
-        // TODO: RSS feed polling not yet implemented
-        return { items: 0, errors: ["RSS ingestion not yet implemented"] };
-      },
-    );
+  // TODO: add youtube: jobs here when YouTube channel polling is implemented
+  // TODO: add rss: jobs here when RSS ingestion is implemented
+  // TODO: add github: jobs here when GitHub ingestion is implemented
+  // TODO: add substack: jobs here when Substack ingestion is implemented
+  if (sources.youtube.length > 0) {
+    console.log(`[scheduler] ${sources.youtube.length} YouTube source(s) configured but YouTube polling not yet implemented — skipping`);
   }
-
-  for (const gh of sources.githubRepos) {
-    registerJob(
-      `github:${gh.owner}/${gh.repo}`,
-      gh.schedule,
-      "github",
-      `${gh.owner}/${gh.repo}`,
-      async () => {
-        // TODO: GitHub issue/PR polling not yet implemented
-        return { items: 0, errors: ["GitHub ingestion not yet implemented"] };
-      },
-    );
+  if (sources.rssFeeds.length > 0) {
+    console.log(`[scheduler] ${sources.rssFeeds.length} RSS source(s) configured but RSS ingestion not yet implemented — skipping`);
   }
-
-  for (const sub of sources.substackNewsletters) {
-    registerJob(
-      `substack:${sub.publication}`,
-      sub.schedule,
-      "substack",
-      sub.publication,
-      async () => {
-        // TODO: Substack polling not yet implemented
-        return { items: 0, errors: ["Substack ingestion not yet implemented"] };
-      },
-    );
+  if (sources.githubRepos.length > 0) {
+    console.log(`[scheduler] ${sources.githubRepos.length} GitHub source(s) configured but GitHub ingestion not yet implemented — skipping`);
+  }
+  if (sources.substackNewsletters.length > 0) {
+    console.log(`[scheduler] ${sources.substackNewsletters.length} Substack source(s) configured but Substack ingestion not yet implemented — skipping`);
   }
 }
 
@@ -196,13 +168,41 @@ export function getStatus(): Array<{
 
 export async function triggerNow(jobName: string): Promise<{ items: number; errors: string[] } | null> {
   const job = jobs.get(jobName);
-  if (!job?.task) return null;
+  if (!job) return null;
 
-  // Manually trigger the job
-  (job.task as unknown as { now: () => void }).now();
+  const start = Date.now();
+  console.log(`[scheduler] Manual trigger: ${jobName}`);
 
-  // Return the last result (may not be updated yet for async tasks)
-  return job.lastResult;
+  try {
+    const result = await job.runner();
+    const entry: HistoryEntry = {
+      timestamp: new Date().toISOString(),
+      jobName,
+      source: job.source,
+      type: job.type,
+      itemsIngested: result.items,
+      errors: result.errors,
+      durationMs: Date.now() - start,
+    };
+    appendHistory(entry);
+    job.lastRun = entry.timestamp;
+    job.lastResult = result;
+    console.log(`[scheduler] Manual trigger done: ${jobName} — ${result.items} items (${entry.durationMs}ms)`);
+    return result;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[scheduler] Manual trigger error in ${jobName}: ${msg}`);
+    appendHistory({
+      timestamp: new Date().toISOString(),
+      jobName,
+      source: job.source,
+      type: job.type,
+      itemsIngested: 0,
+      errors: [msg],
+      durationMs: Date.now() - start,
+    });
+    return { items: 0, errors: [msg] };
+  }
 }
 
 export { readHistory };

@@ -40,11 +40,14 @@ async function storeTweet(tweet: FetchedTweet): Promise<void> {
 
 /**
  * Fetch and store a single tweet or thread.
+ * Pass emitMoc=false when calling in a batch loop — call generateMOC() once after the loop instead.
  */
-export async function ingestTweet(urlOrId: string): Promise<FetchedTweet> {
+export async function ingestTweet(urlOrId: string, emitMoc = true): Promise<FetchedTweet> {
   const tweet = await fetchTweet(urlOrId);
   await storeTweet(tweet);
-  await generateMOC();
+  if (emitMoc) {
+    await generateMOC();
+  }
   return tweet;
 }
 
