@@ -2,7 +2,7 @@ import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { getTranscript } from "../core/transcript.js";
 import { batchFetch } from "../core/batch.js";
-import { writeYouTubeTranscript } from "../obsidian/vault.js";
+import { writeYouTubeTranscript, writeResearch, readNote } from "../obsidian/vault.js";
 import { listEntries, listRecent, listByTag, type IndexEntry } from "../obsidian/index-manager.js";
 import { searchVault } from "../obsidian/query.js";
 import { truncateToTokenBudget } from "../context/truncator.js";
@@ -199,6 +199,53 @@ export const transcriptMcpServer = createSdkMcpServer({
 
         const text = entries.map(formatEntryLine).join("\n");
         return { content: [{ type: "text" as const, text: `${entries.length} entries tagged #${args.tag}:\n\n${text}` }] };
+      },
+    ),
+
+    tool(
+      "kb_write",
+      "Write a research note to the Obsidian vault. Use for saving research findings, analysis, or any content that should persist in the knowledge base.",
+      {
+        slug: z.string().describe("URL-safe filename without extension (e.g. 'vitest-mocking-patterns')"),
+        title: z.string().describe("Human-readable title"),
+        content: z.string().describe("Markdown content body"),
+        tags: z.array(z.string()).default([]).describe("Tags for categorization"),
+        sources: z.array(z.string()).default([]).describe("Source URLs or references"),
+      },
+      async (args) => {
+        const filePath = await writeResearch({
+          slug: args.slug,
+          title: args.title,
+          content: args.content,
+          sources: args.sources,
+          tags: args.tags,
+        });
+
+        return {
+          content: [{ type: "text" as const, text: `Saved: [[research/${args.slug}]] at ${filePath}` }],
+        };
+      },
+    ),
+
+    tool(
+      "kb_read",
+      "Read a specific note from the Obsidian vault by subdir and filename.",
+      {
+        subdir: z.enum(["youtube", "x-posts", "research"]).describe("Vault subdirectory"),
+        filename: z.string().describe("Filename with .md extension"),
+      },
+      async (args) => {
+        const content = await readNote(args.subdir, args.filename);
+        if (!content) {
+          return {
+            content: [{ type: "text" as const, text: `Note not found: ${args.subdir}/${args.filename}` }],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [{ type: "text" as const, text: truncateToTokenBudget(content, config.maxToolResultTokens) }],
+        };
       },
     ),
 

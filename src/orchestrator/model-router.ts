@@ -1,7 +1,7 @@
 /**
  * Model routing: select the cheapest model that can handle the task.
  * Tier 1 (free): Ollama local
- * Tier 2 (cheap): Ollama cloud
+ * Tier 2 (cheap): xAI Grok / OpenAI
  * Tier 3 (frontier): Claude API
  */
 
@@ -11,12 +11,15 @@ export type AgentType = "ingest" | "research" | "coder" | "review" | "ops";
 export type Complexity = "low" | "medium" | "high";
 
 export interface ModelConfig {
-  provider: "ollama" | "anthropic" | "openrouter";
+  provider: "ollama" | "anthropic" | "openrouter" | "xai" | "openai";
   model: string;
   baseUrl: string;
   tier: 1 | 2 | 3;
   estimatedCostPer1kTokens: number; // USD
 }
+
+const XAI_BASE_URL = "https://api.x.ai/v1";
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
 
 const ROUTING_TABLE: Record<AgentType, Record<Complexity, ModelConfig>> = {
   ingest: {
@@ -51,11 +54,11 @@ const ROUTING_TABLE: Record<AgentType, Record<Complexity, ModelConfig>> = {
       estimatedCostPer1kTokens: 0,
     },
     medium: {
-      provider: "ollama",
-      model: "glm-4.7",
-      baseUrl: config.ollamaUrl,
-      tier: 1,
-      estimatedCostPer1kTokens: 0,
+      provider: "xai",
+      model: "grok-4.1-fast",
+      baseUrl: XAI_BASE_URL,
+      tier: 2,
+      estimatedCostPer1kTokens: 0.0004,
     },
     high: {
       provider: "anthropic",
@@ -74,11 +77,11 @@ const ROUTING_TABLE: Record<AgentType, Record<Complexity, ModelConfig>> = {
       estimatedCostPer1kTokens: 0,
     },
     medium: {
-      provider: "ollama",
-      model: "minimax-m2.5:cloud",
-      baseUrl: config.ollamaUrl,
+      provider: "xai",
+      model: "grok-4.1-fast",
+      baseUrl: XAI_BASE_URL,
       tier: 2,
-      estimatedCostPer1kTokens: 0.0005,
+      estimatedCostPer1kTokens: 0.0004,
     },
     high: {
       provider: "anthropic",
@@ -97,18 +100,18 @@ const ROUTING_TABLE: Record<AgentType, Record<Complexity, ModelConfig>> = {
       estimatedCostPer1kTokens: 0,
     },
     medium: {
+      provider: "xai",
+      model: "grok-4.1-fast",
+      baseUrl: XAI_BASE_URL,
+      tier: 2,
+      estimatedCostPer1kTokens: 0.0004,
+    },
+    high: {
       provider: "anthropic",
       model: "claude-sonnet-4-6",
       baseUrl: "https://api.anthropic.com",
       tier: 3,
       estimatedCostPer1kTokens: 0.003,
-    },
-    high: {
-      provider: "anthropic",
-      model: "claude-opus-4-6",
-      baseUrl: "https://api.anthropic.com",
-      tier: 3,
-      estimatedCostPer1kTokens: 0.015,
     },
   },
   ops: {
@@ -173,14 +176,14 @@ export function estimateComplexity(task: string): Complexity {
 export function escalateModel(current: ModelConfig): ModelConfig | null {
   if (current.tier >= 3) return null; // Already at frontier
 
-  // Simple escalation: local → cloud → frontier
-  if (current.provider === "ollama" && !current.model.includes("cloud")) {
+  // Simple escalation: local → xai grok → anthropic frontier
+  if (current.provider === "ollama") {
     return {
-      provider: "ollama",
-      model: "minimax-m2.5:cloud",
-      baseUrl: config.ollamaUrl,
+      provider: "xai",
+      model: "grok-4.1-fast",
+      baseUrl: XAI_BASE_URL,
       tier: 2,
-      estimatedCostPer1kTokens: 0.0005,
+      estimatedCostPer1kTokens: 0.0004,
     };
   }
 

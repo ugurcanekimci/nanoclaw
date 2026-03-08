@@ -22,10 +22,10 @@ fi
 
 SESSIONS_DIR="$NANOCLAW_DIR/data/sessions"
 AGENT_RUNNER_TEMPLATE="$NANOCLAW_DIR/container/agent-runner/src"
-SETTINGS_TEMPLATE="$SWARM_DIR/config/settings-base.json"
+SETTINGS_BASE="$SWARM_DIR/config/settings-base.json"
 
 # All swarm group folders
-GROUPS=(
+SWARM_GROUPS=(
   slack_swarm-main
   slack_swarm-ingest
   slack_swarm-research
@@ -33,12 +33,15 @@ GROUPS=(
   slack_swarm-review
 )
 
+# Extract short name from group folder (e.g. slack_swarm-main → main)
+group_short() { echo "${1#slack_swarm-}"; }
+
 echo "=== Swarm Group Setup ==="
 echo "NanoClaw: $NANOCLAW_DIR"
 echo "Swarm:    $SWARM_DIR"
 echo ""
 
-for group in "${GROUPS[@]}"; do
+for group in "${SWARM_GROUPS[@]}"; do
   echo "[$group]"
 
   # --- 1. Agent-runner source with allowedTools patch ---
@@ -70,48 +73,28 @@ for group in "${GROUPS[@]}"; do
     echo "  WARNING: index.ts not found in agent-runner-src"
   fi
 
-  # --- 2. Settings.json with swarm MCP server ---
+  # --- 2. Settings.json with per-group provider/model/budget config ---
   settings_dir="$SESSIONS_DIR/$group/.claude"
   settings_file="$settings_dir/settings.json"
   mkdir -p "$settings_dir"
 
-  if [ -f "$settings_file" ]; then
-    # Check if swarm MCP already configured
-    if grep -q '"swarm"' "$settings_file" 2>/dev/null; then
-      echo "  settings.json already has swarm MCP"
-    else
-      echo "  Merging swarm MCP into existing settings.json..."
-      # Use node to merge JSON (jq not guaranteed)
-      node -e "
-        const fs = require('fs');
-        const existing = JSON.parse(fs.readFileSync('$settings_file', 'utf8'));
-        const swarm = JSON.parse(fs.readFileSync('$SETTINGS_TEMPLATE', 'utf8'));
-        // Merge env
-        existing.env = { ...existing.env, ...swarm.env };
-        // Merge mcpServers
-        existing.mcpServers = { ...(existing.mcpServers || {}), ...swarm.mcpServers };
-        // Merge permissions
-        if (swarm.permissions) {
-          existing.permissions = existing.permissions || {};
-          existing.permissions.allow = [
-            ...(existing.permissions.allow || []),
-            ...(swarm.permissions.allow || [])
-          ];
-        }
-        fs.writeFileSync('$settings_file', JSON.stringify(existing, null, 2) + '\n');
-      "
-      echo "  Merged swarm MCP config"
-    fi
-  else
-    echo "  Creating settings.json with swarm MCP..."
-    cp "$SETTINGS_TEMPLATE" "$settings_file"
+  # Select per-group template (falls back to base if group-specific doesn't exist)
+  short="$(group_short "$group")"
+  GROUP_TEMPLATE="$SWARM_DIR/config/settings-${short}.json"
+  if [ ! -f "$GROUP_TEMPLATE" ]; then
+    GROUP_TEMPLATE="$SETTINGS_BASE"
   fi
+
+  # Always overwrite settings.json with the latest template
+  # (per-group templates include model routing, budget caps, and MCP config)
+  echo "  Writing settings.json from settings-${short}.json..."
+  cp "$GROUP_TEMPLATE" "$settings_file"
 
   echo ""
 done
 
 echo "=== Group Setup Complete ==="
 echo ""
-echo "All $((${#GROUPS[@]})) groups pre-seeded with:"
+echo "All $((${#SWARM_GROUPS[@]})) groups pre-seeded with:"
 echo "  - agent-runner-src/ with mcp__swarm__* in allowedTools"
-echo "  - settings.json with swarm MCP server config"
+echo "  - settings.json with per-group provider/model/budget config"

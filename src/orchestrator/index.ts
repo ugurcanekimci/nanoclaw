@@ -3,8 +3,13 @@
  * via Obsidian vault, and tracks token spend.
  */
 
+import { appendFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { config } from "../config.js";
 import { routeTask, routeCompoundTask } from "./router.js";
 import { selectModel, estimateComplexity, escalateModel, type AgentType, type ModelConfig } from "./model-router.js";
+
+const COST_LOG_PATH = join(config.dataDir, "cost-log.jsonl");
 
 export interface TaskResult {
   taskId: string;
@@ -24,22 +29,60 @@ interface CostTracker {
   byTier: Record<1 | 2 | 3, { tokens: number; cost: number }>;
 }
 
-const costTracker: CostTracker = {
-  totalTokens: 0,
-  totalCost: 0,
-  byAgent: {
-    ingest: { tokens: 0, cost: 0 },
-    research: { tokens: 0, cost: 0 },
-    coder: { tokens: 0, cost: 0 },
-    review: { tokens: 0, cost: 0 },
-    ops: { tokens: 0, cost: 0 },
-  },
-  byTier: {
-    1: { tokens: 0, cost: 0 },
-    2: { tokens: 0, cost: 0 },
-    3: { tokens: 0, cost: 0 },
-  },
-};
+interface CostEntry {
+  ts: string;
+  agent: AgentType;
+  tier: 1 | 2 | 3;
+  model: string;
+  tokens: number;
+  cost: number;
+}
+
+function loadCostHistory(): CostTracker {
+  const tracker: CostTracker = {
+    totalTokens: 0,
+    totalCost: 0,
+    byAgent: {
+      ingest: { tokens: 0, cost: 0 },
+      research: { tokens: 0, cost: 0 },
+      coder: { tokens: 0, cost: 0 },
+      review: { tokens: 0, cost: 0 },
+      ops: { tokens: 0, cost: 0 },
+    },
+    byTier: {
+      1: { tokens: 0, cost: 0 },
+      2: { tokens: 0, cost: 0 },
+      3: { tokens: 0, cost: 0 },
+    },
+  };
+
+  if (!existsSync(COST_LOG_PATH)) return tracker;
+
+  for (const line of readFileSync(COST_LOG_PATH, "utf-8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry: CostEntry = JSON.parse(line);
+      tracker.totalTokens += entry.tokens;
+      tracker.totalCost += entry.cost;
+      if (entry.agent in tracker.byAgent) {
+        tracker.byAgent[entry.agent].tokens += entry.tokens;
+        tracker.byAgent[entry.agent].cost += entry.cost;
+      }
+      if (entry.tier in tracker.byTier) {
+        tracker.byTier[entry.tier].tokens += entry.tokens;
+        tracker.byTier[entry.tier].cost += entry.cost;
+      }
+    } catch { /* skip malformed lines */ }
+  }
+  return tracker;
+}
+
+function appendCostEntry(entry: CostEntry): void {
+  mkdirSync(config.dataDir, { recursive: true });
+  appendFileSync(COST_LOG_PATH, JSON.stringify(entry) + "\n");
+}
+
+const costTracker: CostTracker = loadCostHistory();
 
 /**
  * Plan the execution of a task.
@@ -77,6 +120,15 @@ export function trackCost(agent: AgentType, model: ModelConfig, tokensUsed: numb
   costTracker.byAgent[agent].cost += cost;
   costTracker.byTier[model.tier].tokens += tokensUsed;
   costTracker.byTier[model.tier].cost += cost;
+
+  appendCostEntry({
+    ts: new Date().toISOString(),
+    agent,
+    tier: model.tier,
+    model: model.model,
+    tokens: tokensUsed,
+    cost,
+  });
 }
 
 /**

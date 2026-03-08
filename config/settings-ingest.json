@@ -2,7 +2,11 @@
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1",
-    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0"
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0",
+    "ANTHROPIC_BASE_URL": "http://host.docker.internal:11434",
+    "ANTHROPIC_AUTH_TOKEN": "ollama",
+    "SWARM_MODEL": "qwen3:8b",
+    "SWARM_MAX_TURNS": "20"
   },
   "mcpServers": {
     "swarm": {
