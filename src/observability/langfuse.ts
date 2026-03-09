@@ -16,6 +16,7 @@ import {
   LANGFUSE_SECRET_KEY,
 } from '../config.js';
 import { logger } from '../logger.js';
+import { redactMetadata } from './redact.js';
 
 let client: Langfuse | null = null;
 
@@ -32,6 +33,65 @@ const NOOP_PROXY: Langfuse = new Proxy({} as Langfuse, {
     return (..._args: unknown[]) => NOOP_PROXY;
   },
 });
+
+/**
+ * Redact `metadata`, `input`, and `output` fields in Langfuse method arguments.
+ * Applied automatically to all trace/span/event calls via the redacting proxy.
+ */
+function redactArgs(args: unknown[]): unknown[] {
+  return args.map((arg) => {
+    if (typeof arg !== 'object' || arg === null) return arg;
+    const obj = arg as Record<string, unknown>;
+    const result = { ...obj };
+    if (result.metadata && typeof result.metadata === 'object') {
+      result.metadata = redactMetadata(
+        result.metadata as Record<string, unknown>,
+      );
+    }
+    if (result.input && typeof result.input === 'object') {
+      result.input = redactMetadata(
+        result.input as Record<string, unknown>,
+      );
+    }
+    if (result.output && typeof result.output === 'object') {
+      result.output = redactMetadata(
+        result.output as Record<string, unknown>,
+      );
+    }
+    return result;
+  });
+}
+
+/** Wrap any object in a proxy that auto-redacts Langfuse method args. */
+function wrapWithRedaction<T extends object>(target: T): T {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      const value = Reflect.get(obj, prop, receiver);
+      if (typeof value !== 'function') return value;
+      // Wrap methods that accept metadata: trace, span, event, generation, score, update
+      const methodsToWrap = new Set([
+        'trace',
+        'span',
+        'event',
+        'generation',
+        'score',
+        'update',
+        'end',
+      ]);
+      if (typeof prop === 'string' && methodsToWrap.has(prop)) {
+        return (...args: unknown[]) => {
+          const result = value.apply(obj, redactArgs(args));
+          // Wrap returned objects too (trace returns spans, spans return events, etc.)
+          if (typeof result === 'object' && result !== null) {
+            return wrapWithRedaction(result);
+          }
+          return result;
+        };
+      }
+      return value.bind(obj);
+    },
+  });
+}
 
 export function initLangfuse(): Langfuse | null {
   if (!LANGFUSE_ENABLED) {
@@ -71,11 +131,14 @@ export function initLangfuse(): Langfuse | null {
 }
 
 /**
- * Returns the Langfuse client or a no-op proxy.
+ * Returns a redacting Langfuse client or a no-op proxy.
+ * All metadata/input/output fields are automatically scrubbed of secrets
+ * and home directory paths before emission.
  * Safe to call at any time — never returns null.
  */
 export function getLangfuse(): Langfuse {
-  return client ?? NOOP_PROXY;
+  if (!client) return NOOP_PROXY;
+  return wrapWithRedaction(client) as unknown as Langfuse;
 }
 
 /**
