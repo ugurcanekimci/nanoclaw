@@ -341,9 +341,8 @@ export const transcriptMcpServer = createSdkMcpServer({
       },
       async (args) => {
         const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
-        const secretKey = process.env.LANGFUSE_SECRET_KEY;
 
-        if (!publicKey || !secretKey) {
+        if (!publicKey || !process.env.LANGFUSE_SECRET_KEY) {
           return {
             content: [{ type: "text" as const, text: "LangFuse is not configured (LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set)." }],
           };
