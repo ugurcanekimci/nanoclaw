@@ -30,6 +30,7 @@ import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { serializeTraceContext } from './observability/context.js';
 import type { TraceContext } from './observability/context.js';
+import { getLangfuse, shouldSample } from './observability/langfuse.js';
 import { AvailableGroup, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -346,10 +347,42 @@ export async function runContainerAgent(
     'Spawning container agent',
   );
 
+  // ── Observability: container lifecycle span ──
+  const sampled =
+    input.traceContext && shouldSample()
+      ? true
+      : false;
+  const langfuse = getLangfuse();
+  // Link to the parent trace from OBS-03 (or create standalone if no parent)
+  const lifecycleTrace = sampled
+    ? langfuse.trace({ id: input.traceContext!.traceId })
+    : null;
+  const lifecycleSpan = lifecycleTrace
+    ? lifecycleTrace.span({
+        name: 'container-lifecycle',
+        startTime: new Date(startTime),
+        metadata: { containerName, groupFolder: group.folder },
+      })
+    : null;
+
+  // Mount summary: count by type, no paths
+  if (lifecycleSpan) {
+    const mountSummary = {
+      total: mounts.length,
+      readOnly: mounts.filter((m) => m.readonly).length,
+      readWrite: mounts.filter((m) => !m.readonly).length,
+    };
+    lifecycleSpan.event({
+      name: 'mounts-summary',
+      metadata: mountSummary,
+    });
+  }
+
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
+    const spawnTime = Date.now();
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -360,17 +393,41 @@ export async function runContainerAgent(
     let stderr = '';
     let stdoutTruncated = false;
     let stderrTruncated = false;
+    let firstStdoutTime: number | undefined;
 
-    container.stdin.write(JSON.stringify(input));
+    const inputJson = JSON.stringify(input);
+    container.stdin.write(inputJson);
     container.stdin.end();
+
+    if (lifecycleSpan) {
+      lifecycleSpan.event({
+        name: 'stdin-written',
+        metadata: { inputSize: inputJson.length },
+      });
+    }
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
 
+    let outputChunkSeq = 0;
+
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
+
+      // Track first stdout byte for spawn span
+      if (firstStdoutTime === undefined) {
+        firstStdoutTime = Date.now();
+        if (lifecycleSpan) {
+          lifecycleSpan.span({
+            name: 'container-spawn',
+            startTime: new Date(spawnTime),
+            endTime: new Date(firstStdoutTime),
+            output: { durationMs: firstStdoutTime - spawnTime },
+          });
+        }
+      }
 
       // Always accumulate for logging
       if (!stdoutTruncated) {
@@ -406,6 +463,18 @@ export async function runContainerAgent(
               newSessionId = parsed.newSessionId;
             }
             hadStreamingOutput = true;
+            outputChunkSeq++;
+            if (lifecycleSpan) {
+              lifecycleSpan.event({
+                name: 'output-chunk',
+                metadata: {
+                  seq: outputChunkSeq,
+                  size: jsonStr.length,
+                  hasResult: !!parsed.result,
+                  status: parsed.status,
+                },
+              });
+            }
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -452,6 +521,12 @@ export async function runContainerAgent(
 
     const killOnTimeout = () => {
       timedOut = true;
+      if (lifecycleSpan) {
+        lifecycleSpan.event({
+          name: 'timeout',
+          metadata: { configuredMs: timeoutMs, hadStreamingOutput },
+        });
+      }
       logger.error(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
@@ -462,6 +537,12 @@ export async function runContainerAgent(
             { group: group.name, containerName, err },
             'Graceful stop failed, force killing',
           );
+          if (lifecycleSpan) {
+            lifecycleSpan.event({
+              name: 'kill',
+              metadata: { reason: 'graceful-stop-failed' },
+            });
+          }
           container.kill('SIGKILL');
         }
       });
@@ -473,6 +554,20 @@ export async function runContainerAgent(
     const resetTimeout = () => {
       clearTimeout(timeout);
       timeout = setTimeout(killOnTimeout, timeoutMs);
+    };
+
+    const endLifecycleSpan = (
+      outcome: 'success' | 'error' | 'timeout' | 'killed',
+      exitCode: number | null,
+    ) => {
+      if (lifecycleSpan) {
+        const durationMs = Date.now() - startTime;
+        lifecycleSpan.event({
+          name: 'exit',
+          metadata: { exitCode, outcome, durationMs, outputChunks: outputChunkSeq },
+        });
+        lifecycleSpan.end();
+      }
     };
 
     container.on('close', (code) => {
@@ -503,6 +598,7 @@ export async function runContainerAgent(
             { group: group.name, containerName, duration, code },
             'Container timed out after output (idle cleanup)',
           );
+          endLifecycleSpan('success', code);
           outputChain.then(() => {
             resolve({
               status: 'success',
@@ -518,6 +614,7 @@ export async function runContainerAgent(
           'Container timed out with no output',
         );
 
+        endLifecycleSpan('timeout', code);
         resolve({
           status: 'error',
           result: null,
@@ -597,6 +694,7 @@ export async function runContainerAgent(
           'Container exited with error',
         );
 
+        endLifecycleSpan('error', code);
         resolve({
           status: 'error',
           result: null,
@@ -607,6 +705,7 @@ export async function runContainerAgent(
 
       // Streaming mode: wait for output chain to settle, return completion marker
       if (onOutput) {
+        endLifecycleSpan('success', code);
         outputChain.then(() => {
           logger.info(
             { group: group.name, duration, newSessionId },
@@ -650,6 +749,7 @@ export async function runContainerAgent(
           'Container completed',
         );
 
+        endLifecycleSpan(output.status === 'success' ? 'success' : 'error', code);
         resolve(output);
       } catch (err) {
         logger.error(
@@ -662,6 +762,7 @@ export async function runContainerAgent(
           'Failed to parse container output',
         );
 
+        endLifecycleSpan('error', code);
         resolve({
           status: 'error',
           result: null,
@@ -676,6 +777,7 @@ export async function runContainerAgent(
         { group: group.name, containerName, error: err },
         'Container spawn error',
       );
+      endLifecycleSpan('error', null);
       resolve({
         status: 'error',
         result: null,
