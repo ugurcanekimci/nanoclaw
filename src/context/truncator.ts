@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { config } from '../config.js';
 
 /**
  * Approximate token count. English text averages ~4 chars per token.
@@ -24,9 +24,11 @@ export function truncateToTokenBudget(
   const truncated = text.slice(0, maxChars);
 
   // Try to cut at a paragraph boundary
-  const lastPara = truncated.lastIndexOf("\n\n");
-  const cutPoint = lastPara > maxChars * 0.7 ? lastPara : truncated.lastIndexOf("\n");
-  const final = cutPoint > maxChars * 0.5 ? truncated.slice(0, cutPoint) : truncated;
+  const lastPara = truncated.lastIndexOf('\n\n');
+  const cutPoint =
+    lastPara > maxChars * 0.7 ? lastPara : truncated.lastIndexOf('\n');
+  const final =
+    cutPoint > maxChars * 0.5 ? truncated.slice(0, cutPoint) : truncated;
 
   const suffix = hint
     ? `\n\n[... truncated at ${maxTokens} tokens — ${hint}]`

@@ -1,13 +1,13 @@
-import type { TranscriptSegment } from "../types.js";
+import type { TranscriptSegment } from '../types.js';
 
 const HTML_ENTITIES: Record<string, string> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#39;": "'",
-  "&apos;": "'",
-  "&nbsp;": " ",
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&apos;': "'",
+  '&nbsp;': ' ',
 };
 
 const ENTITY_RE = /&(?:amp|lt|gt|quot|apos|nbsp|#39);/g;
@@ -22,9 +22,9 @@ function decodeEntities(text: string): string {
 
 function cleanText(text: string): string {
   let cleaned = decodeEntities(text);
-  cleaned = cleaned.replace(MUSIC_RE, "");
-  cleaned = cleaned.replace(FILLER_RE, "");
-  cleaned = cleaned.replace(MULTI_SPACE_RE, " ");
+  cleaned = cleaned.replace(MUSIC_RE, '');
+  cleaned = cleaned.replace(FILLER_RE, '');
+  cleaned = cleaned.replace(MULTI_SPACE_RE, ' ');
   return cleaned.trim();
 }
 
@@ -33,7 +33,7 @@ function cleanText(text: string): string {
  * Paragraphs are inserted where gaps between segments exceed PARA_GAP_SECONDS.
  */
 export function segmentsToText(segments: TranscriptSegment[]): string {
-  if (segments.length === 0) return "";
+  if (segments.length === 0) return '';
 
   const paragraphs: string[] = [];
   let currentParagraph: string[] = [];
@@ -48,7 +48,7 @@ export function segmentsToText(segments: TranscriptSegment[]): string {
       const prevEnd = prev.offset + prev.duration;
       const gap = segment.offset - prevEnd;
       if (gap >= PARA_GAP_SECONDS) {
-        paragraphs.push(currentParagraph.join(" "));
+        paragraphs.push(currentParagraph.join(' '));
         currentParagraph = [];
       }
     }
@@ -57,10 +57,10 @@ export function segmentsToText(segments: TranscriptSegment[]): string {
   }
 
   if (currentParagraph.length > 0) {
-    paragraphs.push(currentParagraph.join(" "));
+    paragraphs.push(currentParagraph.join(' '));
   }
 
-  return paragraphs.join("\n\n");
+  return paragraphs.join('\n\n');
 }
 
 export function wordCount(text: string): number {

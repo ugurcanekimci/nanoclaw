@@ -7,11 +7,11 @@
  */
 
 const NITTER_INSTANCES = [
-  "https://nitter.net",
-  "https://nitter.privacydev.net",
-  "https://nitter.poast.org",
-  "https://nitter.cz",
-  "https://nitter.1d4.us",
+  'https://nitter.net',
+  'https://nitter.privacydev.net',
+  'https://nitter.poast.org',
+  'https://nitter.cz',
+  'https://nitter.1d4.us',
 ];
 
 interface NitterTweet {
@@ -27,12 +27,15 @@ interface NitterTweet {
 const healthyInstances = new Set<string>(NITTER_INSTANCES);
 const failedInstances = new Set<string>();
 
-async function tryFetch(url: string, timeoutMs = 10_000): Promise<Response | null> {
+async function tryFetch(
+  url: string,
+  timeoutMs = 10_000,
+): Promise<Response | null> {
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; SwarmBot/1.0)",
+        'User-Agent': 'Mozilla/5.0 (compatible; SwarmBot/1.0)',
       },
     });
     if (response.ok) return response;
@@ -133,13 +136,13 @@ export async function searchNitter(
 export async function refreshInstancePool(): Promise<number> {
   const checks = NITTER_INSTANCES.map(checkInstance);
   const results = await Promise.allSettled(checks);
-  return results.filter((r) => r.status === "fulfilled" && r.value).length;
+  return results.filter((r) => r.status === 'fulfilled' && r.value).length;
 }
 
 /**
  * Parse Nitter RSS XML into tweet objects.
  */
-function parseRssTweets(xml: string, defaultAuthor = ""): NitterTweet[] {
+function parseRssTweets(xml: string, defaultAuthor = ''): NitterTweet[] {
   const tweets: NitterTweet[] = [];
 
   // Simple XML parsing — Nitter RSS is well-structured
@@ -149,11 +152,11 @@ function parseRssTweets(xml: string, defaultAuthor = ""): NitterTweet[] {
   while ((itemMatch = itemRe.exec(xml)) !== null) {
     const item = itemMatch[1]!;
 
-    const title = extractXmlTag(item, "title") || "";
-    const link = extractXmlTag(item, "link") || "";
-    const description = extractXmlTag(item, "description") || "";
-    const pubDate = extractXmlTag(item, "pubDate") || "";
-    const creator = extractXmlTag(item, "dc:creator") || defaultAuthor;
+    const title = extractXmlTag(item, 'title') || '';
+    const link = extractXmlTag(item, 'link') || '';
+    const description = extractXmlTag(item, 'description') || '';
+    const pubDate = extractXmlTag(item, 'pubDate') || '';
+    const creator = extractXmlTag(item, 'dc:creator') || defaultAuthor;
 
     // Extract tweet ID from link
     const idMatch = link.match(/status\/(\d+)/);
@@ -161,22 +164,22 @@ function parseRssTweets(xml: string, defaultAuthor = ""): NitterTweet[] {
 
     // Clean HTML from description
     const text = description
-      .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
       .replace(/&#39;/g, "'")
       .trim();
 
     tweets.push({
       id: idMatch[1],
-      author: creator.replace("@", ""),
-      authorName: creator.replace("@", ""),
+      author: creator.replace('@', ''),
+      authorName: creator.replace('@', ''),
       text,
       date: pubDate,
-      url: link.replace(/nitter\.\w+/, "x.com"),
-      isReply: title.startsWith("R to"),
+      url: link.replace(/nitter\.\w+/, 'x.com'),
+      isReply: title.startsWith('R to'),
     });
   }
 
@@ -184,7 +187,10 @@ function parseRssTweets(xml: string, defaultAuthor = ""): NitterTweet[] {
 }
 
 function extractXmlTag(xml: string, tag: string): string | null {
-  const re = new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?<\\/${tag}>`, "s");
+  const re = new RegExp(
+    `<${tag}[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?<\\/${tag}>`,
+    's',
+  );
   const match = xml.match(re);
   return match?.[1] ?? null;
 }

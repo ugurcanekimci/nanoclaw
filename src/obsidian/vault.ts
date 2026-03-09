@@ -1,9 +1,9 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { join, dirname } from "node:path";
-import { stringify as yamlStringify, parse as yamlParse } from "yaml";
-import { config } from "../config.js";
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
+import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
+import { config } from '../config.js';
 
-export type ContentType = "youtube-transcript" | "x-post" | "research";
+export type ContentType = 'youtube-transcript' | 'x-post' | 'research';
 
 export interface VaultFrontmatter {
   type: ContentType;
@@ -20,7 +20,10 @@ async function ensureDir(filePath: string): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
 }
 
-export function parseFrontmatter(content: string): { meta: VaultFrontmatter | null; body: string } {
+export function parseFrontmatter(content: string): {
+  meta: VaultFrontmatter | null;
+  body: string;
+} {
   const match = content.match(FRONTMATTER_RE);
   if (!match?.[1]) return { meta: null, body: content };
   const meta = yamlParse(match[1]) as VaultFrontmatter;
@@ -28,7 +31,10 @@ export function parseFrontmatter(content: string): { meta: VaultFrontmatter | nu
   return { meta, body };
 }
 
-export function buildMarkdown(frontmatter: Record<string, unknown>, body: string): string {
+export function buildMarkdown(
+  frontmatter: Record<string, unknown>,
+  body: string,
+): string {
   const yaml = yamlStringify(frontmatter, { lineWidth: 0 });
   return `---\n${yaml}---\n\n${body}\n`;
 }
@@ -42,13 +48,16 @@ export async function writeNote(
   const filePath = vaultPath(subdir, filename);
   await ensureDir(filePath);
   const content = buildMarkdown(frontmatter, body);
-  await writeFile(filePath, content, "utf-8");
+  await writeFile(filePath, content, 'utf-8');
   return filePath;
 }
 
-export async function readNote(subdir: string, filename: string): Promise<string | null> {
+export async function readNote(
+  subdir: string,
+  filename: string,
+): Promise<string | null> {
   try {
-    return await readFile(vaultPath(subdir, filename), "utf-8");
+    return await readFile(vaultPath(subdir, filename), 'utf-8');
   } catch {
     return null;
   }
@@ -77,15 +86,15 @@ export async function writeYouTubeTranscript(params: {
   fetchedAt?: string;
 }): Promise<string> {
   const frontmatter = {
-    type: "youtube-transcript",
+    type: 'youtube-transcript',
     videoId: params.videoId,
     title: params.title,
-    channel: params.channelName || "",
+    channel: params.channelName || '',
     url: params.url,
     language: params.language,
     duration: params.durationSeconds,
     wordCount: params.wordCount,
-    summary: params.summary || "",
+    summary: params.summary || '',
     fetchedAt: params.fetchedAt || new Date().toISOString(),
     tags: params.tags || [],
     relatedPosts: [],
@@ -93,21 +102,21 @@ export async function writeYouTubeTranscript(params: {
 
   const body = [
     `# ${params.title || params.videoId}`,
-    "",
-    `**Channel:** ${params.channelName || "Unknown"}`,
+    '',
+    `**Channel:** ${params.channelName || 'Unknown'}`,
     `**URL:** ${params.url}`,
     `**Duration:** ${params.durationSeconds}s | **Words:** ${params.wordCount}`,
-    "",
-    "## Summary",
-    "",
-    params.summary || "",
-    "",
-    "## Transcript",
-    "",
+    '',
+    '## Summary',
+    '',
+    params.summary || '',
+    '',
+    '## Transcript',
+    '',
     params.fullText,
-  ].join("\n");
+  ].join('\n');
 
-  return writeNote("youtube", `${params.videoId}.md`, frontmatter, body);
+  return writeNote('youtube', `${params.videoId}.md`, frontmatter, body);
 }
 
 export async function writeXPost(params: {
@@ -122,14 +131,14 @@ export async function writeXPost(params: {
   tags?: string[];
 }): Promise<string> {
   const frontmatter = {
-    type: "x-post",
+    type: 'x-post',
     tweetId: params.tweetId,
     author: params.author,
     authorName: params.authorName || params.author,
     url: params.url,
     isThread: params.isThread,
     tweetCount: params.tweetCount,
-    summary: params.summary || "",
+    summary: params.summary || '',
     fetchedAt: new Date().toISOString(),
     tags: params.tags || [],
     relatedVideos: [],
@@ -137,16 +146,16 @@ export async function writeXPost(params: {
 
   const body = [
     `# ${params.authorName || params.author} (@${params.author})`,
-    "",
+    '',
     `**URL:** ${params.url}`,
     `**Thread:** ${params.tweetCount} posts`,
-    "",
-    "## Content",
-    "",
+    '',
+    '## Content',
+    '',
     params.content,
-  ].join("\n");
+  ].join('\n');
 
-  return writeNote("x-posts", `${params.tweetId}.md`, frontmatter, body);
+  return writeNote('x-posts', `${params.tweetId}.md`, frontmatter, body);
 }
 
 export async function writeResearch(params: {
@@ -158,9 +167,9 @@ export async function writeResearch(params: {
   tags?: string[];
 }): Promise<string> {
   const frontmatter = {
-    type: "research",
+    type: 'research',
     title: params.title,
-    summary: params.summary || "",
+    summary: params.summary || '',
     fetchedAt: new Date().toISOString(),
     tags: params.tags || [],
     sources: params.sources,
@@ -168,13 +177,13 @@ export async function writeResearch(params: {
 
   const body = [
     `# ${params.title}`,
-    "",
+    '',
     params.content,
-    "",
-    "## Sources",
-    "",
+    '',
+    '## Sources',
+    '',
     ...params.sources.map((s) => `- ${s}`),
-  ].join("\n");
+  ].join('\n');
 
-  return writeNote("research", `${params.slug}.md`, frontmatter, body);
+  return writeNote('research', `${params.slug}.md`, frontmatter, body);
 }

@@ -1,5 +1,5 @@
-import { config } from "../config.js";
-import type { TranscriptSegment } from "../types.js";
+import { config } from '../config.js';
+import type { TranscriptSegment } from '../types.js';
 
 interface ApifyTranscriptResult {
   text?: string;
@@ -18,11 +18,11 @@ export async function fetchViaApify(
   if (!config.apifyToken) return null;
 
   const runUrl =
-    "https://api.apify.com/v2/acts/topaz_sharingan~youtube-transcript-scraper/run-sync-get-dataset-items";
+    'https://api.apify.com/v2/acts/topaz_sharingan~youtube-transcript-scraper/run-sync-get-dataset-items';
 
   const response = await fetch(`${runUrl}?token=${config.apifyToken}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       urls: [videoUrl],
       language,

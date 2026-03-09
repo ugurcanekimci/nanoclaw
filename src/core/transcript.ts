@@ -1,14 +1,14 @@
-import { join } from "node:path";
+import { join } from 'node:path';
 import {
   fetchTranscript as ytFetchTranscript,
   FsCache,
-} from "youtube-transcript-plus";
-import { config } from "../config.js";
-import { fetchViaApify } from "../fallback/apify.js";
-import { segmentsToText, wordCount, totalDuration } from "./parser.js";
-import type { Transcript, TranscriptSegment } from "../types.js";
+} from 'youtube-transcript-plus';
+import { config } from '../config.js';
+import { fetchViaApify } from '../fallback/apify.js';
+import { segmentsToText, wordCount, totalDuration } from './parser.js';
+import type { Transcript, TranscriptSegment } from '../types.js';
 
-const cache = new FsCache(join(config.dataDir, "cache"), config.cacheTTL);
+const cache = new FsCache(join(config.dataDir, 'cache'), config.cacheTTL);
 
 const VIDEO_ID_RE =
   /(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
@@ -33,14 +33,14 @@ async function fetchOEmbedMeta(videoId: string): Promise<OEmbedMeta> {
   try {
     const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
     const res = await fetch(url);
-    if (!res.ok) return { title: "", channelName: "" };
-    const data = await res.json() as { title?: string; author_name?: string };
+    if (!res.ok) return { title: '', channelName: '' };
+    const data = (await res.json()) as { title?: string; author_name?: string };
     return {
-      title: data.title || "",
-      channelName: data.author_name || "",
+      title: data.title || '',
+      channelName: data.author_name || '',
     };
   } catch {
-    return { title: "", channelName: "" };
+    return { title: '', channelName: '' };
   }
 }
 
@@ -70,7 +70,11 @@ export async function getTranscript(
     }));
   } catch (err) {
     // Don't fallback on rate limits — propagate immediately
-    if (err instanceof Error && err.name === "YoutubeTranscriptTooManyRequestError") throw err;
+    if (
+      err instanceof Error &&
+      err.name === 'YoutubeTranscriptTooManyRequestError'
+    )
+      throw err;
 
     const apifyResult = await fetchViaApify(url, language);
     if (apifyResult && apifyResult.length > 0) {

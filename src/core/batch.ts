@@ -1,6 +1,6 @@
-import { config } from "../config.js";
-import { getTranscript, extractVideoId } from "./transcript.js";
-import type { BatchResult } from "../types.js";
+import { config } from '../config.js';
+import { getTranscript, extractVideoId } from './transcript.js';
+import type { BatchResult } from '../types.js';
 
 /**
  * Process multiple YouTube URLs with concurrency limiting.
@@ -22,21 +22,21 @@ export async function batchFetch(
     } catch {
       results.push({
         url,
-        videoId: "",
-        status: "error",
-        error: "Invalid YouTube URL or video ID",
+        videoId: '',
+        status: 'error',
+        error: 'Invalid YouTube URL or video ID',
       });
       return;
     }
 
     try {
       const transcript = await getTranscript(url, language);
-      results.push({ url, videoId, status: "success", transcript });
+      results.push({ url, videoId, status: 'success', transcript });
     } catch (err) {
       results.push({
         url,
         videoId,
-        status: "error",
+        status: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
     }

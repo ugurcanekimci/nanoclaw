@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 // ── Swarm transcript types ──
 
@@ -31,7 +31,7 @@ export type Transcript = z.infer<typeof TranscriptSchema>;
 // Single transcript request
 export const TranscriptRequestSchema = z.object({
   url: z.string(),
-  language: z.string().default("en"),
+  language: z.string().default('en'),
   store: z.boolean().default(true),
 });
 
@@ -40,7 +40,7 @@ export type TranscriptRequest = z.infer<typeof TranscriptRequestSchema>;
 // Batch request
 export const BatchRequestSchema = z.object({
   urls: z.array(z.string()).min(1).max(50),
-  language: z.string().default("en"),
+  language: z.string().default('en'),
   concurrency: z.number().min(1).max(10).default(3),
   store: z.boolean().default(true),
 });
@@ -51,7 +51,7 @@ export type BatchRequest = z.infer<typeof BatchRequestSchema>;
 export const BatchResultSchema = z.object({
   url: z.string(),
   videoId: z.string(),
-  status: z.enum(["success", "error"]),
+  status: z.enum(['success', 'error']),
   transcript: TranscriptSchema.optional(),
   error: z.string().optional(),
 });
@@ -199,6 +199,14 @@ export interface Channel {
 
 // Callback type that channels use to deliver inbound messages
 export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
+
+// Available group for IPC group discovery
+export interface AvailableGroup {
+  jid: string;
+  name: string;
+  lastActivity: string;
+  isRegistered: boolean;
+}
 
 // Callback for chat metadata discovery.
 // name is optional — channels that deliver names inline (Telegram) pass it here;

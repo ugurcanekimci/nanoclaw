@@ -6,6 +6,7 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  AvailableGroup,
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
@@ -714,4 +715,23 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+/**
+ * Get available groups for IPC group discovery.
+ * Returns all group chats ordered by most recent activity,
+ * with registration status marked.
+ */
+export function getAvailableGroups(
+  registeredJids: Set<string>,
+): AvailableGroup[] {
+  const chats = getAllChats();
+  return chats
+    .filter((c) => c.jid !== '__group_sync__' && c.is_group)
+    .map((c) => ({
+      jid: c.jid,
+      name: c.name,
+      lastActivity: c.last_message_time,
+      isRegistered: registeredJids.has(c.jid),
+    }));
 }

@@ -5,41 +5,41 @@
  * Tier 3 (frontier): Claude API
  */
 
-import { config } from "../config.js";
+import { config } from '../config.js';
 
-export type AgentType = "ingest" | "research" | "coder" | "review" | "ops";
-export type Complexity = "low" | "medium" | "high";
+export type AgentType = 'ingest' | 'research' | 'coder' | 'review' | 'ops';
+export type Complexity = 'low' | 'medium' | 'high';
 
 export interface ModelConfig {
-  provider: "ollama" | "anthropic" | "openrouter" | "xai" | "openai";
+  provider: 'ollama' | 'anthropic' | 'openrouter' | 'xai' | 'openai';
   model: string;
   baseUrl: string;
   tier: 1 | 2 | 3;
   estimatedCostPer1kTokens: number; // USD
 }
 
-const XAI_BASE_URL = "https://api.x.ai/v1";
-const OPENAI_BASE_URL = "https://api.openai.com/v1";
+const XAI_BASE_URL = 'https://api.x.ai/v1';
+const OPENAI_BASE_URL = 'https://api.openai.com/v1';
 
 const ROUTING_TABLE: Record<AgentType, Record<Complexity, ModelConfig>> = {
   ingest: {
     low: {
-      provider: "ollama",
-      model: "qwen3:8b",
+      provider: 'ollama',
+      model: 'qwen3:8b',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
     },
     medium: {
-      provider: "ollama",
-      model: "glm-4.7",
+      provider: 'ollama',
+      model: 'glm-4.7',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
     },
     high: {
-      provider: "ollama",
-      model: "glm-4.7",
+      provider: 'ollama',
+      model: 'glm-4.7',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
@@ -47,91 +47,91 @@ const ROUTING_TABLE: Record<AgentType, Record<Complexity, ModelConfig>> = {
   },
   research: {
     low: {
-      provider: "ollama",
-      model: "glm-4.7",
+      provider: 'ollama',
+      model: 'glm-4.7',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
     },
     medium: {
-      provider: "xai",
-      model: "grok-4.1-fast",
+      provider: 'xai',
+      model: 'grok-4.1-fast',
       baseUrl: XAI_BASE_URL,
       tier: 2,
       estimatedCostPer1kTokens: 0.0004,
     },
     high: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      baseUrl: "https://api.anthropic.com",
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      baseUrl: 'https://api.anthropic.com',
       tier: 3,
       estimatedCostPer1kTokens: 0.003,
     },
   },
   coder: {
     low: {
-      provider: "ollama",
-      model: "qwen3-coder:30b",
+      provider: 'ollama',
+      model: 'qwen3-coder:30b',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
     },
     medium: {
-      provider: "xai",
-      model: "grok-4.1-fast",
+      provider: 'xai',
+      model: 'grok-4.1-fast',
       baseUrl: XAI_BASE_URL,
       tier: 2,
       estimatedCostPer1kTokens: 0.0004,
     },
     high: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      baseUrl: "https://api.anthropic.com",
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      baseUrl: 'https://api.anthropic.com',
       tier: 3,
       estimatedCostPer1kTokens: 0.003,
     },
   },
   review: {
     low: {
-      provider: "ollama",
-      model: "qwen3-coder:30b",
+      provider: 'ollama',
+      model: 'qwen3-coder:30b',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
     },
     medium: {
-      provider: "xai",
-      model: "grok-4.1-fast",
+      provider: 'xai',
+      model: 'grok-4.1-fast',
       baseUrl: XAI_BASE_URL,
       tier: 2,
       estimatedCostPer1kTokens: 0.0004,
     },
     high: {
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      baseUrl: "https://api.anthropic.com",
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      baseUrl: 'https://api.anthropic.com',
       tier: 3,
       estimatedCostPer1kTokens: 0.003,
     },
   },
   ops: {
     low: {
-      provider: "ollama",
-      model: "qwen3:8b",
+      provider: 'ollama',
+      model: 'qwen3:8b',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
     },
     medium: {
-      provider: "ollama",
-      model: "qwen3:8b",
+      provider: 'ollama',
+      model: 'qwen3:8b',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
     },
     high: {
-      provider: "ollama",
-      model: "glm-4.7",
+      provider: 'ollama',
+      model: 'glm-4.7',
       baseUrl: config.ollamaUrl,
       tier: 1,
       estimatedCostPer1kTokens: 0,
@@ -142,7 +142,10 @@ const ROUTING_TABLE: Record<AgentType, Record<Complexity, ModelConfig>> = {
 /**
  * Select model for an agent + complexity level.
  */
-export function selectModel(agent: AgentType, complexity: Complexity): ModelConfig {
+export function selectModel(
+  agent: AgentType,
+  complexity: Complexity,
+): ModelConfig {
   return ROUTING_TABLE[agent][complexity];
 }
 
@@ -155,19 +158,32 @@ export function estimateComplexity(task: string): Complexity {
 
   // High complexity indicators
   const highIndicators = [
-    "architect", "security", "review", "redesign", "refactor entire",
-    "complex", "multi-step", "cross-cutting", "migrate",
+    'architect',
+    'security',
+    'review',
+    'redesign',
+    'refactor entire',
+    'complex',
+    'multi-step',
+    'cross-cutting',
+    'migrate',
   ];
-  if (highIndicators.some((i) => lower.includes(i))) return "high";
+  if (highIndicators.some((i) => lower.includes(i))) return 'high';
 
   // Medium complexity indicators
   const mediumIndicators = [
-    "implement", "add feature", "fix bug", "research", "analyze",
-    "compare", "synthesize", "multiple files",
+    'implement',
+    'add feature',
+    'fix bug',
+    'research',
+    'analyze',
+    'compare',
+    'synthesize',
+    'multiple files',
   ];
-  if (mediumIndicators.some((i) => lower.includes(i))) return "medium";
+  if (mediumIndicators.some((i) => lower.includes(i))) return 'medium';
 
-  return "low";
+  return 'low';
 }
 
 /**
@@ -177,10 +193,10 @@ export function escalateModel(current: ModelConfig): ModelConfig | null {
   if (current.tier >= 3) return null; // Already at frontier
 
   // Simple escalation: local → xai grok → anthropic frontier
-  if (current.provider === "ollama") {
+  if (current.provider === 'ollama') {
     return {
-      provider: "xai",
-      model: "grok-4.1-fast",
+      provider: 'xai',
+      model: 'grok-4.1-fast',
       baseUrl: XAI_BASE_URL,
       tier: 2,
       estimatedCostPer1kTokens: 0.0004,
@@ -188,9 +204,9 @@ export function escalateModel(current: ModelConfig): ModelConfig | null {
   }
 
   return {
-    provider: "anthropic",
-    model: "claude-sonnet-4-6",
-    baseUrl: "https://api.anthropic.com",
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-6',
+    baseUrl: 'https://api.anthropic.com',
     tier: 3,
     estimatedCostPer1kTokens: 0.003,
   };

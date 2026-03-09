@@ -3,7 +3,7 @@
  * Supports rotating (new IP per request) and sticky (same IP for session) modes.
  */
 
-import { config } from "../config.js";
+import { config } from '../config.js';
 
 export interface ProxyEndpoint {
   server: string;
@@ -30,9 +30,7 @@ function buildEndpoints(): ProxyEndpoint[] {
  * Get a rotating proxy (new IP per request).
  */
 export function getRotatingProxy(): ProxyEndpoint | null {
-  const endpoints = buildEndpoints().filter(
-    (e) => !failed.has(e.server),
-  );
+  const endpoints = buildEndpoints().filter((e) => !failed.has(e.server));
   if (endpoints.length === 0) return null;
 
   rotationIndex = (rotationIndex + 1) % endpoints.length;
@@ -87,7 +85,7 @@ export async function healthCheck(proxy: ProxyEndpoint): Promise<boolean> {
   try {
     // Node.js native fetch doesn't support proxy directly
     // Use the proxy to test connectivity via the API server
-    const response = await fetch("https://httpbin.org/ip", {
+    const response = await fetch('https://httpbin.org/ip', {
       signal: AbortSignal.timeout(10_000),
     });
     return response.ok;

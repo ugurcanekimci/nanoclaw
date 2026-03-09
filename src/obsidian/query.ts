@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { config } from "../config.js";
-import { listEntries, type IndexEntry } from "./index-manager.js";
-import type { ContentType } from "./vault.js";
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { config } from '../config.js';
+import { listEntries, type IndexEntry } from './index-manager.js';
+import type { ContentType } from './vault.js';
 
 export interface VaultSearchResult {
   entry: IndexEntry;
@@ -38,18 +38,18 @@ export function parseQuery(raw: string): QueryFilter {
 
     if (key && value) {
       switch (key) {
-        case "type":
-          if (value === "youtube") filter.type = "youtube-transcript";
-          else if (value === "x" || value === "twitter") filter.type = "x-post";
+        case 'type':
+          if (value === 'youtube') filter.type = 'youtube-transcript';
+          else if (value === 'x' || value === 'twitter') filter.type = 'x-post';
           else filter.type = value as ContentType;
           break;
-        case "tag":
+        case 'tag':
           filter.tag = value;
           break;
-        case "channel":
+        case 'channel':
           filter.channel = value;
           break;
-        case "author":
+        case 'author':
           filter.author = value;
           break;
         default:
@@ -61,7 +61,7 @@ export function parseQuery(raw: string): QueryFilter {
   }
 
   if (textParts.length > 0) {
-    filter.text = textParts.join(" ");
+    filter.text = textParts.join(' ');
   }
 
   return filter;
@@ -74,7 +74,9 @@ export async function searchVault(query: string): Promise<VaultSearchResult[]> {
   // Apply metadata filters
   if (filter.tag) {
     const tagLower = filter.tag.toLowerCase();
-    entries = entries.filter((e) => e.tags.some((t) => t.toLowerCase() === tagLower));
+    entries = entries.filter((e) =>
+      e.tags.some((t) => t.toLowerCase() === tagLower),
+    );
   }
   if (filter.channel) {
     const chLower = filter.channel.toLowerCase();
@@ -82,7 +84,9 @@ export async function searchVault(query: string): Promise<VaultSearchResult[]> {
   }
   if (filter.author) {
     const authLower = filter.author.toLowerCase();
-    entries = entries.filter((e) => e.author?.toLowerCase().includes(authLower));
+    entries = entries.filter((e) =>
+      e.author?.toLowerCase().includes(authLower),
+    );
   }
 
   // Text search across content
@@ -106,16 +110,27 @@ export async function searchVault(query: string): Promise<VaultSearchResult[]> {
     }
 
     // Tag match boost
-    if (textLower && entry.tags.some((t) => t.toLowerCase().includes(textLower))) {
+    if (
+      textLower &&
+      entry.tags.some((t) => t.toLowerCase().includes(textLower))
+    ) {
       score += 3;
     }
 
     // Content grep (expensive, only if we have text to search)
     if (textLower) {
       try {
-        const subdir = entry.type === "youtube-transcript" ? "youtube" : entry.type === "x-post" ? "x-posts" : "research";
-        const content = await readFile(join(config.obsidianVault, subdir, entry.filePath), "utf-8");
-        const lines = content.split("\n");
+        const subdir =
+          entry.type === 'youtube-transcript'
+            ? 'youtube'
+            : entry.type === 'x-post'
+              ? 'x-posts'
+              : 'research';
+        const content = await readFile(
+          join(config.obsidianVault, subdir, entry.filePath),
+          'utf-8',
+        );
+        const lines = content.split('\n');
         for (const line of lines) {
           if (line.toLowerCase().includes(textLower)) {
             matchedLines.push(line.trim());
@@ -141,5 +156,7 @@ export async function searchVault(query: string): Promise<VaultSearchResult[]> {
     }
   }
 
-  return results.sort((a, b) => b.score - a.score).slice(0, config.maxSearchResults);
+  return results
+    .sort((a, b) => b.score - a.score)
+    .slice(0, config.maxSearchResults);
 }

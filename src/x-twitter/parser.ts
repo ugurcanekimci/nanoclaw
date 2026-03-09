@@ -24,17 +24,17 @@ export function cleanTweetText(text: string): string {
   let cleaned = text;
 
   // Remove "Replying to" noise
-  cleaned = cleaned.replace(REPLY_NOISE_RE, "");
+  cleaned = cleaned.replace(REPLY_NOISE_RE, '');
 
   // Convert @mentions to markdown links
-  cleaned = cleaned.replace(MENTION_RE, "[@$1](https://x.com/$1)");
+  cleaned = cleaned.replace(MENTION_RE, '[@$1](https://x.com/$1)');
 
   // Convert #hashtags to Obsidian tags (keep the # for Obsidian)
   // Only convert if not already inside a link
   cleaned = cleaned.replace(HASHTAG_RE, (match, tag: string) => `#${tag}`);
 
   // Collapse multiple newlines
-  cleaned = cleaned.replace(MULTI_NEWLINE_RE, "\n\n");
+  cleaned = cleaned.replace(MULTI_NEWLINE_RE, '\n\n');
 
   return cleaned.trim();
 }
@@ -52,7 +52,7 @@ export function formatThread(tweets: string[]): string {
       const cleaned = cleanTweetText(text);
       return `**${i + 1}/${tweets.length}:**\n${cleaned}`;
     })
-    .join("\n\n---\n\n");
+    .join('\n\n---\n\n');
 }
 
 /**
@@ -67,7 +67,8 @@ export function extractTweetMeta(text: string): {
   const mentions = [...text.matchAll(/@(\w{1,15})/g)].map((m) => m[1]!);
   const hashtags = [...text.matchAll(/#(\w+)/g)].map((m) => m[1]!);
   const urls = [...text.matchAll(/https?:\/\/[^\s)]+/g)].map((m) => m[0]);
-  const hasMedia = /(?:pic\.twitter\.com|pbs\.twimg\.com|video\.twimg\.com)/.test(text);
+  const hasMedia =
+    /(?:pic\.twitter\.com|pbs\.twimg\.com|video\.twimg\.com)/.test(text);
 
   return {
     mentions: [...new Set(mentions)],

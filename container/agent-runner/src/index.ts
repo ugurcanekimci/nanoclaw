@@ -379,6 +379,156 @@ function createSecretScannerHook(
   };
 }
 
+// === Git Safety Enforcement ===
+// Blocks destructive git and gh commands based on agent group role.
+// Logs all git/gh commands to an audit file for orchestrator visibility.
+
+const CODER_BLOCKED_GIT: RegExp[] = [
+  /git\s+push\s+.*--force/,
+  /git\s+push\s+-f\b/,
+  /git\s+push\s+.*\b(origin|upstream)\s+main\b/,
+  /git\s+reset\s+--hard/,
+  /git\s+rebase\b/,
+  /git\s+clean\s+-[fd]/,
+  /git\s+branch\s+-D\b/,
+  /git\s+checkout\s+--\s*\./,
+  /git\s+config\b/,
+  /rm\s+-rf?\s+\.git\b/,
+];
+
+const CODER_BLOCKED_GH: RegExp[] = [
+  /gh\s+pr\s+merge\b/,
+  /gh\s+pr\s+close\b/,
+  /gh\s+repo\s+delete\b/,
+];
+
+const REVIEW_BLOCKED_GIT: RegExp[] = [
+  /git\s+(push|commit|reset|rebase|clean|checkout\s+--|merge|cherry-pick|branch\s+-[dD]|config|stash\s+drop)\b/,
+];
+
+const REVIEW_BLOCKED_GH: RegExp[] = [
+  /gh\s+pr\s+merge\b/,
+  /gh\s+pr\s+create\b/,
+  /gh\s+pr\s+close\b/,
+];
+
+const DEFAULT_BLOCKED_GIT: RegExp[] = [
+  /\bgit\s+/,
+];
+
+const DEFAULT_BLOCKED_GH: RegExp[] = [
+  /gh\s+pr\s+(merge|create|close|review)\b/,
+];
+
+function getGitBlocklist(groupFolder: string): { git: RegExp[]; gh: RegExp[] } {
+  if (groupFolder.endsWith('-coder')) return { git: CODER_BLOCKED_GIT, gh: CODER_BLOCKED_GH };
+  if (groupFolder.endsWith('-review')) return { git: REVIEW_BLOCKED_GIT, gh: REVIEW_BLOCKED_GH };
+  // Orchestrator (main) can run gh pr merge but not destructive git ops
+  if (groupFolder.endsWith('-main')) return { git: CODER_BLOCKED_GIT, gh: [] };
+  return { git: DEFAULT_BLOCKED_GIT, gh: DEFAULT_BLOCKED_GH };
+}
+
+const GIT_AUDIT_FILE = '/workspace/group/git-audit.log';
+
+function auditGitCommand(command: string, blocked: boolean, group: string, reason?: string): void {
+  try {
+    const entry = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      command: command.slice(0, 500),
+      blocked,
+      group,
+      ...(reason ? { reason } : {}),
+    });
+    fs.appendFileSync(GIT_AUDIT_FILE, entry + '\n');
+  } catch { /* audit is best-effort */ }
+}
+
+function createGitSafetyHook(groupFolder: string): HookCallback {
+  const { git: gitBlocked, gh: ghBlocked } = getGitBlocklist(groupFolder);
+
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const isGitCmd = /\bgit\s+/.test(command);
+    const isGhCmd = /\bgh\s+/.test(command);
+    if (!isGitCmd && !isGhCmd) return {};
+
+    // Check git blocklist
+    for (const pattern of gitBlocked) {
+      if (pattern.test(command)) {
+        const reason = `Blocked: destructive git operation not permitted for ${groupFolder}`;
+        auditGitCommand(command, true, groupFolder, reason);
+        log(`[GIT-SAFETY] ${reason}: ${command.slice(0, 200)}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason,
+          },
+        };
+      }
+    }
+
+    // Check gh CLI blocklist
+    for (const pattern of ghBlocked) {
+      if (pattern.test(command)) {
+        const reason = `Blocked: gh operation not permitted for ${groupFolder}`;
+        auditGitCommand(command, true, groupFolder, reason);
+        log(`[GIT-SAFETY] ${reason}: ${command.slice(0, 200)}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason,
+          },
+        };
+      }
+    }
+
+    // Allowed — still audit it
+    auditGitCommand(command, false, groupFolder);
+    return {};
+  };
+}
+
+// === Protected Path Enforcement ===
+// Blocks Write/Edit to infrastructure files that agents should never modify.
+
+const PROTECTED_PATHS = [
+  'container/Dockerfile',
+  'container/build.sh',
+  'container/skills/',
+  '.husky/',
+  '.github/',
+  'scripts/start.sh',
+];
+
+function createProtectedPathHook(groupFolder: string): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const filePath = (preInput.tool_input as { file_path?: string })?.file_path;
+    if (!filePath) return {};
+
+    for (const protected_ of PROTECTED_PATHS) {
+      if (filePath.includes(protected_)) {
+        const reason = `Blocked: ${protected_} is a protected infrastructure file`;
+        log(`[PATH-SAFETY] ${reason} (agent: ${groupFolder})`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason,
+          },
+        };
+      }
+    }
+
+    return {};
+  };
+}
+
 function sanitizeFilename(summary: string): string {
   return summary
     .toLowerCase()
@@ -634,7 +784,9 @@ async function runQuery(
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         PreToolUse: [
-          { matcher: 'Bash', hooks: [createSanitizeBashHook()] },
+          { matcher: 'Bash', hooks: [createSanitizeBashHook(), createGitSafetyHook(containerInput.groupFolder)] },
+          { matcher: 'Write', hooks: [createProtectedPathHook(containerInput.groupFolder)] },
+          { matcher: 'Edit', hooks: [createProtectedPathHook(containerInput.groupFolder)] },
           { hooks: [createSecretScannerHook(knownSecrets, external)] },
         ],
       },

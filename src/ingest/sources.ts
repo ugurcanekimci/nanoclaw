@@ -3,9 +3,9 @@
  * Runtime config loaded from data/sources.json, with TypeScript defaults as fallback.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { config } from "../config.js";
+import fs from 'node:fs';
+import path from 'node:path';
+import { config } from '../config.js';
 
 export interface YouTubeSource {
   channelId: string;
@@ -61,7 +61,7 @@ const DEFAULTS: SourceConfig = {
   substackNewsletters: [],
 };
 
-const sourcesPath = path.join(config.dataDir, "sources.json");
+const sourcesPath = path.join(config.dataDir, 'sources.json');
 
 /**
  * Load sources from data/sources.json, falling back to defaults.
@@ -69,11 +69,14 @@ const sourcesPath = path.join(config.dataDir, "sources.json");
 export function loadSources(): SourceConfig {
   try {
     if (fs.existsSync(sourcesPath)) {
-      const raw = fs.readFileSync(sourcesPath, "utf-8");
+      const raw = fs.readFileSync(sourcesPath, 'utf-8');
       return { ...DEFAULTS, ...JSON.parse(raw) };
     }
   } catch (err) {
-    console.error(`[sources] Failed to load ${sourcesPath}, using defaults:`, err);
+    console.error(
+      `[sources] Failed to load ${sourcesPath}, using defaults:`,
+      err,
+    );
   }
   return DEFAULTS;
 }

@@ -2,14 +2,13 @@
 # Swarm PoC — End-to-End Startup Script
 #
 # This is the single entry point for starting the entire swarm stack.
-# It injects 1Password secrets, configures NanoClaw groups, starts
-# services, and launches NanoClaw.
+# It validates the .env, configures NanoClaw groups, starts services,
+# and launches NanoClaw.
 #
 # Prerequisites:
-#   - 1Password CLI: op signin
 #   - Docker: running
 #   - NanoClaw: cloned at /Users/u/nanoclaw with npm install done
-#   - Swarm: npm install done
+#   - .env file with secrets (copy .env.example and fill in values)
 #
 # Usage: ./scripts/start.sh
 
@@ -28,14 +27,9 @@ echo ""
 
 # ─── Step 0: Prerequisites ───────────────────────────────────────────
 
-echo "[0/6] Checking prerequisites..."
+echo "[0/5] Checking prerequisites..."
 
 errors=0
-
-if ! command -v op &>/dev/null; then
-  echo "  ERROR: 1Password CLI (op) not found. Install: brew install --cask 1password-cli"
-  errors=$((errors + 1))
-fi
 
 if ! command -v docker &>/dev/null; then
   echo "  ERROR: Docker not found."
@@ -55,6 +49,11 @@ if [ ! -d "$NANOCLAW_DIR/src" ]; then
   errors=$((errors + 1))
 fi
 
+if [ ! -f "$NANOCLAW_DIR/.env" ]; then
+  echo "  ERROR: No .env file found. Copy .env.example and fill in secrets."
+  errors=$((errors + 1))
+fi
+
 if [ $errors -gt 0 ]; then
   echo ""
   echo "Fix the above errors and re-run."
@@ -64,24 +63,23 @@ fi
 echo "  All prerequisites OK"
 echo ""
 
-# ─── Step 1: 1Password → .env ────────────────────────────────────────
+# ─── Step 1: Validate .env ──────────────────────────────────────────
 
-echo "[1/6] Injecting secrets from 1Password (Swarm vault only)..."
+echo "[1/5] Validating .env..."
 
-if ! op whoami &>/dev/null 2>&1; then
-  echo "  1Password not authenticated. Attempting sign-in..."
-  op signin
-fi
+required_vars=(SLACK_BOT_TOKEN SLACK_APP_TOKEN)
+missing=0
+for var in "${required_vars[@]}"; do
+  if ! grep -q "^${var}=" "$NANOCLAW_DIR/.env"; then
+    echo "  MISSING: $var"
+    missing=$((missing + 1))
+  fi
+done
 
-# Verify we can access the Swarm vault specifically
-if ! op vault get Swarm &>/dev/null 2>&1; then
-  echo "  ERROR: 'Swarm' vault not found in 1Password."
-  echo "  Run: ./scripts/op-setup.sh"
+if [ $missing -gt 0 ]; then
+  echo "  ERROR: Missing required env vars. Edit $NANOCLAW_DIR/.env"
   exit 1
 fi
-
-op inject -i "$SWARM_DIR/config/nanoclaw.env.tpl" -o "$NANOCLAW_DIR/.env" --force
-echo "  Secrets injected into $NANOCLAW_DIR/.env"
 
 # Refresh Claude Code OAuth token from macOS Keychain
 KEYCHAIN_CREDS=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null || true)
@@ -104,7 +102,7 @@ echo ""
 
 # ─── Step 2: Mount Allowlist ─────────────────────────────────────────
 
-echo "[2/6] Installing mount allowlist..."
+echo "[2/5] Installing mount allowlist..."
 
 ALLOWLIST_DIR="$HOME/.config/nanoclaw"
 mkdir -p "$ALLOWLIST_DIR"
@@ -114,7 +112,7 @@ echo ""
 
 # ─── Step 3: Obsidian Vault ──────────────────────────────────────────
 
-echo "[3/6] Ensuring Obsidian vault structure..."
+echo "[3/5] Ensuring Obsidian vault structure..."
 
 mkdir -p "$VAULT_DIR"/{youtube,x-posts,research,changelogs,agents,_index,_templates}
 echo "  Vault directories OK at $VAULT_DIR"
@@ -122,14 +120,14 @@ echo ""
 
 # ─── Step 4: Group Setup ─────────────────────────────────────────────
 
-echo "[4/6] Pre-seeding group configs..."
+echo "[4/5] Pre-seeding group configs..."
 
 bash "$SWARM_DIR/scripts/setup-groups.sh" "$NANOCLAW_DIR"
 echo ""
 
-# ─── Step 5: Docker Services ─────────────────────────────────────────
+# ─── Step 5: Docker Services + NanoClaw ──────────────────────────────
 
-echo "[5/6] Starting Docker services..."
+echo "[5/5] Starting Docker services..."
 
 cd "$SWARM_DIR"
 
@@ -146,9 +144,7 @@ fi
 
 echo ""
 
-# ─── Step 6: Start NanoClaw ──────────────────────────────────────────
-
-echo "[6/6] Starting NanoClaw..."
+echo "Starting NanoClaw..."
 echo ""
 echo "═══════════════════════════════════════════════════"
 echo "  Swarm stack ready. NanoClaw starting below."

@@ -3,10 +3,19 @@
  *   Nitter RSS (free) → Crawl4AI+Camoufox (proxy cost) → Apify (credits)
  */
 
-import { config } from "../config.js";
-import { extractTweetId, extractTweetMeta, formatThread, cleanTweetText } from "./parser.js";
-import { fetchTweetPage, fetchUserTimeline as fetchNitterTimeline, searchNitter } from "./nitter.js";
-import { extractTopics } from "../context/summarizer.js";
+import { config } from '../config.js';
+import {
+  extractTweetId,
+  extractTweetMeta,
+  formatThread,
+  cleanTweetText,
+} from './parser.js';
+import {
+  fetchTweetPage,
+  fetchUserTimeline as fetchNitterTimeline,
+  searchNitter,
+} from './nitter.js';
+import { extractTopics } from '../context/summarizer.js';
 
 export interface FetchedTweet {
   tweetId: string;
@@ -30,7 +39,7 @@ export async function fetchTweet(urlOrId: string): Promise<FetchedTweet> {
 
   // Try Nitter first — extract username from URL if available
   const usernameMatch = urlOrId.match(/(?:twitter\.com|x\.com)\/(\w+)\/status/);
-  const username = usernameMatch?.[1] || "i";
+  const username = usernameMatch?.[1] || 'i';
 
   let rawContent: string | null = null;
 
@@ -61,11 +70,11 @@ export async function fetchTweet(urlOrId: string): Promise<FetchedTweet> {
 
   const result: FetchedTweet = {
     tweetId,
-    author: username !== "i" ? username : meta.mentions[0] || "unknown",
-    authorName: username !== "i" ? username : meta.mentions[0] || "unknown",
+    author: username !== 'i' ? username : meta.mentions[0] || 'unknown',
+    authorName: username !== 'i' ? username : meta.mentions[0] || 'unknown',
     url: `https://x.com/${username}/status/${tweetId}`,
     content: cleaned,
-    isThread: cleaned.includes("---"), // Simple thread detection
+    isThread: cleaned.includes('---'), // Simple thread detection
     tweetCount: (cleaned.match(/\*\*\d+\/\d+:\*\*/g) || []).length || 1,
     fetchedAt: new Date().toISOString(),
     tags,
@@ -124,7 +133,9 @@ export async function searchTweetsRaw(
       isThread: false,
       tweetCount: 1,
       fetchedAt: new Date().toISOString(),
-      tags: [...new Set([...meta.hashtags, ...extractTopics(cleaned).slice(0, 5)])],
+      tags: [
+        ...new Set([...meta.hashtags, ...extractTopics(cleaned).slice(0, 5)]),
+      ],
     };
   });
 }
@@ -139,12 +150,12 @@ function extractTextFromNitterHtml(html: string): string | null {
 
   while ((m = contentRe.exec(html)) !== null) {
     const text = m[1]!
-      .replace(/<br\s*\/?>/g, "\n")
-      .replace(/<a[^>]*href="([^"]*)"[^>]*>[^<]*<\/a>/g, "$1")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
+      .replace(/<br\s*\/?>/g, '\n')
+      .replace(/<a[^>]*href="([^"]*)"[^>]*>[^<]*<\/a>/g, '$1')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
       .replace(/&#39;/g, "'")
       .trim();
@@ -157,9 +168,9 @@ function extractTextFromNitterHtml(html: string): string | null {
 async function fetchViaCrawl4AI(url: string): Promise<string | null> {
   try {
     const response = await fetch(`${config.crawl4aiUrl}/scrape`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, output_format: "markdown" }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, output_format: 'markdown' }),
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) return null;
@@ -177,8 +188,8 @@ async function fetchViaApify(tweetId: string): Promise<string | null> {
     const response = await fetch(
       `https://api.apify.com/v2/acts/apify~twitter-scraper/run-sync-get-dataset-items?token=${config.apifyToken}`,
       {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tweetIDs: [tweetId],
           maxItems: 1,
@@ -187,7 +198,10 @@ async function fetchViaApify(tweetId: string): Promise<string | null> {
       },
     );
     if (!response.ok) return null;
-    const results = (await response.json()) as Array<{ full_text?: string; text?: string }>;
+    const results = (await response.json()) as Array<{
+      full_text?: string;
+      text?: string;
+    }>;
     if (results.length === 0) return null;
     return results[0]!.full_text || results[0]!.text || null;
   } catch {

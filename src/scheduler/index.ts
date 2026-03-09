@@ -3,11 +3,14 @@
  * No LLM, no container — calls ingest functions directly.
  */
 
-import * as cron from "node-cron";
-import { loadSources, type SourceConfig } from "../ingest/sources.js";
-import { ingestUserTimeline, ingestSearchTweets } from "../ingest/x-twitter.js";
-import { ingestYouTubeVideo, getChannelRecentVideos } from "../ingest/youtube.js";
-import { appendHistory, readHistory, type HistoryEntry } from "./history.js";
+import * as cron from 'node-cron';
+import { loadSources, type SourceConfig } from '../ingest/sources.js';
+import { ingestUserTimeline, ingestSearchTweets } from '../ingest/x-twitter.js';
+import {
+  ingestYouTubeVideo,
+  getChannelRecentVideos,
+} from '../ingest/youtube.js';
+import { appendHistory, readHistory, type HistoryEntry } from './history.js';
 
 interface ScheduledJob {
   name: string;
@@ -31,7 +34,9 @@ function registerJob(
 ): void {
   // Validate cron expression
   if (!cron.validate(schedule)) {
-    console.error(`[scheduler] Invalid cron "${schedule}" for job "${name}" — skipping`);
+    console.error(
+      `[scheduler] Invalid cron "${schedule}" for job "${name}" — skipping`,
+    );
     return;
   }
 
@@ -58,7 +63,9 @@ function registerJob(
         job.lastResult = result;
       }
 
-      console.log(`[scheduler] Done: ${name} — ${result.items} items, ${result.errors.length} errors (${entry.durationMs}ms)`);
+      console.log(
+        `[scheduler] Done: ${name} — ${result.items} items, ${result.errors.length} errors (${entry.durationMs}ms)`,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[scheduler] Error in ${name}: ${msg}`);
@@ -74,12 +81,24 @@ function registerJob(
     }
   });
 
-  jobs.set(name, { name, schedule, type, source, task, runner, lastRun: null, lastResult: null });
+  jobs.set(name, {
+    name,
+    schedule,
+    type,
+    source,
+    task,
+    runner,
+    lastRun: null,
+    lastResult: null,
+  });
 }
 
 /** Slugify a string for safe use in job names (replace non-alphanumeric with dash). */
 function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 function registerSourceJobs(sources: SourceConfig): void {
@@ -88,7 +107,7 @@ function registerSourceJobs(sources: SourceConfig): void {
     registerJob(
       `x-timeline:${x.handle}`,
       x.schedule,
-      "x-timeline",
+      'x-timeline',
       `@${x.handle}`,
       async () => {
         const tweets = await ingestUserTimeline(x.handle, 10);
@@ -102,7 +121,7 @@ function registerSourceJobs(sources: SourceConfig): void {
     registerJob(
       `x-search:${slugify(x.query)}`,
       x.schedule,
-      "x-search",
+      'x-search',
       `search:"${x.query}"`,
       async () => {
         const tweets = await ingestSearchTweets(x.query, 10);
@@ -113,11 +132,11 @@ function registerSourceJobs(sources: SourceConfig): void {
 
   // YouTube channel polling — poll RSS feed for recent videos every N hours per source
   for (const yt of sources.youtube) {
-    const schedule = yt.schedule || "0 */6 * * *";
+    const schedule = yt.schedule || '0 */6 * * *';
     registerJob(
       `youtube:${slugify(yt.name || yt.channelId)}`,
       schedule,
-      "youtube",
+      'youtube',
       yt.name || yt.channelId,
       async () => {
         const videoIds = await getChannelRecentVideos(yt.channelId);
@@ -125,7 +144,7 @@ function registerSourceJobs(sources: SourceConfig): void {
         let items = 0;
         for (const id of videoIds) {
           try {
-            await ingestYouTubeVideo(id, yt.language ?? "en", yt.tags);
+            await ingestYouTubeVideo(id, yt.language ?? 'en', yt.tags);
             items++;
           } catch (err) {
             errors.push(err instanceof Error ? err.message : String(err));
@@ -137,13 +156,19 @@ function registerSourceJobs(sources: SourceConfig): void {
   }
   // TODO: add rss: jobs here when RSS ingestion is implemented
   if (sources.rssFeeds.length > 0) {
-    console.log(`[scheduler] ${sources.rssFeeds.length} RSS source(s) configured but RSS ingestion not yet implemented — skipping`);
+    console.log(
+      `[scheduler] ${sources.rssFeeds.length} RSS source(s) configured but RSS ingestion not yet implemented — skipping`,
+    );
   }
   if (sources.githubRepos.length > 0) {
-    console.log(`[scheduler] ${sources.githubRepos.length} GitHub source(s) configured but GitHub ingestion not yet implemented — skipping`);
+    console.log(
+      `[scheduler] ${sources.githubRepos.length} GitHub source(s) configured but GitHub ingestion not yet implemented — skipping`,
+    );
   }
   if (sources.substackNewsletters.length > 0) {
-    console.log(`[scheduler] ${sources.substackNewsletters.length} Substack source(s) configured but Substack ingestion not yet implemented — skipping`);
+    console.log(
+      `[scheduler] ${sources.substackNewsletters.length} Substack source(s) configured but Substack ingestion not yet implemented — skipping`,
+    );
   }
 }
 
@@ -158,12 +183,16 @@ export function startScheduler(): void {
     sources.substackNewsletters.length;
 
   if (totalSources === 0) {
-    console.log("[scheduler] No sources configured — scheduler idle. Edit data/sources.json to add sources.");
+    console.log(
+      '[scheduler] No sources configured — scheduler idle. Edit data/sources.json to add sources.',
+    );
     return;
   }
 
   registerSourceJobs(sources);
-  console.log(`[scheduler] Started with ${jobs.size} jobs from ${totalSources} sources`);
+  console.log(
+    `[scheduler] Started with ${jobs.size} jobs from ${totalSources} sources`,
+  );
 }
 
 export function stopScheduler(): void {
@@ -171,7 +200,7 @@ export function stopScheduler(): void {
     job.task?.stop();
   }
   jobs.clear();
-  console.log("[scheduler] Stopped all jobs");
+  console.log('[scheduler] Stopped all jobs');
 }
 
 export function getStatus(): Array<{
@@ -185,7 +214,9 @@ export function getStatus(): Array<{
   return Array.from(jobs.values()).map(({ task: _, ...rest }) => rest);
 }
 
-export async function triggerNow(jobName: string): Promise<{ items: number; errors: string[] } | null> {
+export async function triggerNow(
+  jobName: string,
+): Promise<{ items: number; errors: string[] } | null> {
   const job = jobs.get(jobName);
   if (!job) return null;
 
@@ -206,7 +237,9 @@ export async function triggerNow(jobName: string): Promise<{ items: number; erro
     appendHistory(entry);
     job.lastRun = entry.timestamp;
     job.lastResult = result;
-    console.log(`[scheduler] Manual trigger done: ${jobName} — ${result.items} items (${entry.durationMs}ms)`);
+    console.log(
+      `[scheduler] Manual trigger done: ${jobName} — ${result.items} items (${entry.durationMs}ms)`,
+    );
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

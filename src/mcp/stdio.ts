@@ -12,8 +12,8 @@
  *   }
  * }
  */
-import { transcriptMcpServer } from "./server.js";
+import { transcriptMcpServer } from './server.js';
 
-console.error("YouTube Transcript MCP server starting (stdio mode)...");
+console.error('YouTube Transcript MCP server starting (stdio mode)...');
 
 export { transcriptMcpServer };

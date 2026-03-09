@@ -3,8 +3,8 @@
  * Crawl4AI outputs clean markdown — 30-50% fewer tokens than raw HTML.
  */
 
-import { config } from "../config.js";
-import { truncateToTokenBudget } from "../context/truncator.js";
+import { config } from '../config.js';
+import { truncateToTokenBudget } from '../context/truncator.js';
 
 export interface ScrapeResult {
   url: string;
@@ -24,18 +24,26 @@ export interface CrawlResult {
  */
 export async function scrape(url: string): Promise<ScrapeResult> {
   const response = await fetch(`${config.crawl4aiUrl}/scrape`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url,
-      output_format: "markdown",
-      remove_selectors: ["nav", "footer", "header", ".sidebar", ".cookie-banner"],
+      output_format: 'markdown',
+      remove_selectors: [
+        'nav',
+        'footer',
+        'header',
+        '.sidebar',
+        '.cookie-banner',
+      ],
     }),
     signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
-    throw new Error(`Crawl4AI scrape failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Crawl4AI scrape failed: ${response.status} ${response.statusText}`,
+    );
   }
 
   const data = (await response.json()) as {
@@ -44,18 +52,22 @@ export async function scrape(url: string): Promise<ScrapeResult> {
     url?: string;
   };
 
-  const rawMarkdown = data.markdown || "";
+  const rawMarkdown = data.markdown || '';
   const tokenEstimate = Math.ceil(rawMarkdown.length / 3.5);
   const needsTruncation = tokenEstimate > config.maxToolResultTokens;
 
   const markdown = needsTruncation
-    ? truncateToTokenBudget(rawMarkdown, config.maxToolResultTokens, `full content at ${url}`)
+    ? truncateToTokenBudget(
+        rawMarkdown,
+        config.maxToolResultTokens,
+        `full content at ${url}`,
+      )
     : rawMarkdown;
 
   return {
     url: data.url || url,
     markdown,
-    title: data.title || "",
+    title: data.title || '',
     tokenEstimate: needsTruncation ? config.maxToolResultTokens : tokenEstimate,
     truncated: needsTruncation,
   };
@@ -69,19 +81,21 @@ export async function crawl(
   maxPages = 5,
 ): Promise<CrawlResult> {
   const response = await fetch(`${config.crawl4aiUrl}/crawl`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: startUrl,
       max_pages: maxPages,
-      output_format: "markdown",
-      remove_selectors: ["nav", "footer", "header", ".sidebar"],
+      output_format: 'markdown',
+      remove_selectors: ['nav', 'footer', 'header', '.sidebar'],
     }),
     signal: AbortSignal.timeout(120_000),
   });
 
   if (!response.ok) {
-    throw new Error(`Crawl4AI crawl failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Crawl4AI crawl failed: ${response.status} ${response.statusText}`,
+    );
   }
 
   const data = (await response.json()) as {
@@ -94,10 +108,16 @@ export async function crawl(
     return {
       url: page.url,
       markdown: needsTruncation
-        ? truncateToTokenBudget(page.markdown, config.maxToolResultTokens, `full at ${page.url}`)
+        ? truncateToTokenBudget(
+            page.markdown,
+            config.maxToolResultTokens,
+            `full at ${page.url}`,
+          )
         : page.markdown,
       title: page.title,
-      tokenEstimate: needsTruncation ? config.maxToolResultTokens : tokenEstimate,
+      tokenEstimate: needsTruncation
+        ? config.maxToolResultTokens
+        : tokenEstimate,
       truncated: needsTruncation,
     };
   });

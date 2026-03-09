@@ -3,19 +3,25 @@
  * via Obsidian vault, and tracks token spend.
  */
 
-import { appendFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { config } from "../config.js";
-import { routeTask, routeCompoundTask } from "./router.js";
-import { selectModel, estimateComplexity, escalateModel, type AgentType, type ModelConfig } from "./model-router.js";
+import { appendFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { config } from '../config.js';
+import { routeTask, routeCompoundTask } from './router.js';
+import {
+  selectModel,
+  estimateComplexity,
+  escalateModel,
+  type AgentType,
+  type ModelConfig,
+} from './model-router.js';
 
-const COST_LOG_PATH = join(config.dataDir, "cost-log.jsonl");
+const COST_LOG_PATH = join(config.dataDir, 'cost-log.jsonl');
 
 export interface TaskResult {
   taskId: string;
   agent: AgentType;
   model: ModelConfig;
-  status: "success" | "error" | "escalated";
+  status: 'success' | 'error' | 'escalated';
   output: string;
   tokensUsed: number;
   estimatedCost: number;
@@ -58,7 +64,7 @@ function loadCostHistory(): CostTracker {
 
   if (!existsSync(COST_LOG_PATH)) return tracker;
 
-  for (const line of readFileSync(COST_LOG_PATH, "utf-8").split("\n")) {
+  for (const line of readFileSync(COST_LOG_PATH, 'utf-8').split('\n')) {
     if (!line.trim()) continue;
     try {
       const entry: CostEntry = JSON.parse(line);
@@ -72,14 +78,16 @@ function loadCostHistory(): CostTracker {
         tracker.byTier[entry.tier].tokens += entry.tokens;
         tracker.byTier[entry.tier].cost += entry.cost;
       }
-    } catch { /* skip malformed lines */ }
+    } catch {
+      /* skip malformed lines */
+    }
   }
   return tracker;
 }
 
 function appendCostEntry(entry: CostEntry): void {
   mkdirSync(config.dataDir, { recursive: true });
-  appendFileSync(COST_LOG_PATH, JSON.stringify(entry) + "\n");
+  appendFileSync(COST_LOG_PATH, JSON.stringify(entry) + '\n');
 }
 
 const costTracker: CostTracker = loadCostHistory();
@@ -111,7 +119,11 @@ export function planTask(task: string) {
 /**
  * Track cost after task completion.
  */
-export function trackCost(agent: AgentType, model: ModelConfig, tokensUsed: number): void {
+export function trackCost(
+  agent: AgentType,
+  model: ModelConfig,
+  tokensUsed: number,
+): void {
   const cost = (tokensUsed / 1000) * model.estimatedCostPer1kTokens;
 
   costTracker.totalTokens += tokensUsed;
@@ -137,13 +149,14 @@ export function trackCost(agent: AgentType, model: ModelConfig, tokensUsed: numb
 export function getCostReport(): CostTracker & { summary: string } {
   const lines = [
     `Total: ${costTracker.totalTokens} tokens, $${costTracker.totalCost.toFixed(4)}`,
-    "",
-    "By Agent:",
+    '',
+    'By Agent:',
     ...Object.entries(costTracker.byAgent).map(
-      ([agent, { tokens, cost }]) => `  ${agent}: ${tokens} tokens, $${cost.toFixed(4)}`,
+      ([agent, { tokens, cost }]) =>
+        `  ${agent}: ${tokens} tokens, $${cost.toFixed(4)}`,
     ),
-    "",
-    "By Tier:",
+    '',
+    'By Tier:',
     `  Tier 1 (local): ${costTracker.byTier[1].tokens} tokens, $${costTracker.byTier[1].cost.toFixed(4)}`,
     `  Tier 2 (cloud): ${costTracker.byTier[2].tokens} tokens, $${costTracker.byTier[2].cost.toFixed(4)}`,
     `  Tier 3 (frontier): ${costTracker.byTier[3].tokens} tokens, $${costTracker.byTier[3].cost.toFixed(4)}`,
@@ -151,7 +164,7 @@ export function getCostReport(): CostTracker & { summary: string } {
 
   return {
     ...costTracker,
-    summary: lines.join("\n"),
+    summary: lines.join('\n'),
   };
 }
 

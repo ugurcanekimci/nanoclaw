@@ -3,13 +3,13 @@
  * Pure orchestration: loads sources, calls ingest functions, returns results.
  */
 
-import { loadSources } from "./sources.js";
-import { ingestUserTimeline, ingestSearchTweets } from "./x-twitter.js";
-import { ingestYouTubeVideo, getChannelRecentVideos } from "./youtube.js";
+import { loadSources } from './sources.js';
+import { ingestUserTimeline, ingestSearchTweets } from './x-twitter.js';
+import { ingestYouTubeVideo, getChannelRecentVideos } from './youtube.js';
 
 export interface IngestionResult {
   source: string;
-  type: "youtube" | "x-timeline" | "x-search" | "rss" | "github" | "substack";
+  type: 'youtube' | 'x-timeline' | 'x-search' | 'rss' | 'github' | 'substack';
   itemsIngested: number;
   errors: string[];
 }
@@ -26,14 +26,14 @@ export async function runXIngestionCycle(): Promise<IngestionResult[]> {
       const tweets = await ingestUserTimeline(account.handle, 10);
       results.push({
         source: `@${account.handle}`,
-        type: "x-timeline",
+        type: 'x-timeline',
         itemsIngested: tweets.length,
         errors: [],
       });
     } catch (err) {
       results.push({
         source: `@${account.handle}`,
-        type: "x-timeline",
+        type: 'x-timeline',
         itemsIngested: 0,
         errors: [err instanceof Error ? err.message : String(err)],
       });
@@ -45,14 +45,14 @@ export async function runXIngestionCycle(): Promise<IngestionResult[]> {
       const tweets = await ingestSearchTweets(term.query, 10);
       results.push({
         source: `search:"${term.query}"`,
-        type: "x-search",
+        type: 'x-search',
         itemsIngested: tweets.length,
         errors: [],
       });
     } catch (err) {
       results.push({
         source: `search:"${term.query}"`,
-        type: "x-search",
+        type: 'x-search',
         itemsIngested: 0,
         errors: [err instanceof Error ? err.message : String(err)],
       });
@@ -79,7 +79,7 @@ export async function runYouTubeIngestionCycle(): Promise<IngestionResult[]> {
 
       for (const id of videoIds) {
         try {
-          await ingestYouTubeVideo(id, ch.language ?? "en", ch.tags);
+          await ingestYouTubeVideo(id, ch.language ?? 'en', ch.tags);
           itemsIngested++;
         } catch (err) {
           errors.push(err instanceof Error ? err.message : String(err));
@@ -91,7 +91,7 @@ export async function runYouTubeIngestionCycle(): Promise<IngestionResult[]> {
 
     results.push({
       source: ch.name,
-      type: "youtube",
+      type: 'youtube',
       itemsIngested,
       errors,
     });
