@@ -213,9 +213,15 @@ function buildVolumeMounts(
   return mounts;
 }
 
+// Groups explicitly permitted to receive GITHUB_TOKEN.
+// Intentionally narrow: any container with gh CLI + bypassPermissions + GITHUB_TOKEN
+// could push/delete branches. Only swarm-coder has a legitimate need.
+const GITHUB_TOKEN_ALLOWED_GROUPS = ['slack_swarm-coder'];
+
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  group?: RegisteredGroup,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -239,10 +245,26 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
-  // Pass OPENAI_API_KEY if configured — allows agents to use SWARM_MODEL=gpt-4o etc.
-  const { OPENAI_API_KEY } = readEnvFile(['OPENAI_API_KEY']);
-  if (OPENAI_API_KEY) {
+  // Pass OPENAI_API_KEY only to groups that explicitly declare openaiEnabled: true.
+  // Restricts the key to containers that actually need it (e.g. SWARM_MODEL=gpt-4o),
+  // reducing exposure surface.
+  const { OPENAI_API_KEY, GITHUB_TOKEN } = readEnvFile([
+    'OPENAI_API_KEY',
+    'GITHUB_TOKEN',
+  ]);
+  if (OPENAI_API_KEY && group?.containerConfig?.openaiEnabled) {
     args.push('-e', `OPENAI_API_KEY=${OPENAI_API_KEY}`);
+  }
+
+  // Pass GITHUB_TOKEN only to explicitly allowlisted groups.
+  // gh CLI + bypassPermissions + an unrestricted token is a wide attack surface;
+  // restrict to groups that legitimately need repo push access (e.g. swarm-coder).
+  if (
+    GITHUB_TOKEN &&
+    group?.folder &&
+    GITHUB_TOKEN_ALLOWED_GROUPS.includes(group.folder)
+  ) {
+    args.push('-e', `GITHUB_TOKEN=${GITHUB_TOKEN}`);
   }
 
   // Runtime-specific args for host gateway resolution
@@ -285,7 +307,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group);
 
   logger.debug(
     {

@@ -53,6 +53,7 @@ beforeEach(() => {
 
   deps = {
     sendMessage: async () => {},
+    injectPrompt: () => {},
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;

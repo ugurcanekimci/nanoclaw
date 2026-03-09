@@ -12,6 +12,12 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  /**
+   * Inject a prompt directly into a target group's agent session.
+   * Stores the message in DB and wakes the message loop — no Slack round-trip needed.
+   * Used when one agent needs to trigger another agent's session (e.g., sub-agent → orchestrator).
+   */
+  injectPrompt: (chatJid: string, text: string, sender: string) => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -25,6 +31,56 @@ export interface IpcDeps {
 }
 
 let ipcWatcherRunning = false;
+
+// === IPC Injection Rate Limiting ===
+// Prevents runaway loops from IPC injection storms.
+const IPC_INJECT_MAX_PER_MINUTE = 10;
+
+// Per source→target rate limiter: tracks injections from a specific source to a
+// specific target within a 60s window. Keyed as "source:target" for precision —
+// multiple sources can inject into the same target without sharing a counter.
+const ipcInjectCounts = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
+
+function checkInjectRateLimit(
+  sourceFolder: string,
+  targetFolder: string,
+): boolean {
+  const key = `${sourceFolder}:${targetFolder}`;
+  const now = Date.now();
+  const entry = ipcInjectCounts.get(key);
+  if (!entry || now - entry.windowStart > 60_000) {
+    ipcInjectCounts.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= IPC_INJECT_MAX_PER_MINUTE) return false;
+  entry.count++;
+  return true;
+}
+
+// Per-pair rate limiter: prevents cross-group loops (A→B→A→B).
+// Tracks combined injection count for both directions of a pair within a 60s window.
+const PAIR_INJECT_MAX_PER_MINUTE = 5;
+const ipcPairCounts = new Map<string, { count: number; windowStart: number }>();
+
+function checkPairRateLimit(
+  sourceFolder: string,
+  targetFolder: string,
+): boolean {
+  // Canonical pair key: alphabetically sorted so A→B and B→A share the same counter.
+  const pairKey = [sourceFolder, targetFolder].sort().join('↔');
+  const now = Date.now();
+  const entry = ipcPairCounts.get(pairKey);
+  if (!entry || now - entry.windowStart > 60_000) {
+    ipcPairCounts.set(pairKey, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= PAIR_INJECT_MAX_PER_MINUTE) return false;
+  entry.count++;
+  return true;
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -80,11 +136,57 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
+                  // Post to Slack (or other channel) for human visibility
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
                   );
+
+                  // Inject into the target group's agent session directly so the
+                  // orchestrator wakes up without relying on the Slack round-trip
+                  // (bot messages are filtered out by getNewMessages and never trigger
+                  // agent sessions).
+                  if (!targetGroup) {
+                    // No registered group for this JID — it's a channel-only send.
+                    // Nothing to inject.
+                    logger.debug(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC target has no registered agent group — skipping session inject',
+                    );
+                  } else if (targetGroup.folder === sourceGroup) {
+                    // Self-injection: would cause an infinite loop. Slack send above
+                    // already provides visibility; block the session injection.
+                    logger.warn(
+                      { sourceGroup },
+                      'Blocked self-targeted IPC injection (loop prevention)',
+                    );
+                  } else if (
+                    !checkInjectRateLimit(sourceGroup, targetGroup.folder)
+                  ) {
+                    logger.warn(
+                      { sourceGroup, targetFolder: targetGroup.folder },
+                      `IPC injection rate limit exceeded (>${IPC_INJECT_MAX_PER_MINUTE}/min from source to target) — dropping`,
+                    );
+                  } else if (
+                    !checkPairRateLimit(sourceGroup, targetGroup.folder)
+                  ) {
+                    logger.warn(
+                      { sourceGroup, targetFolder: targetGroup.folder },
+                      `IPC cross-group injection rate limit exceeded (>${PAIR_INJECT_MAX_PER_MINUTE}/min per pair) — dropping`,
+                    );
+                  } else {
+                    const senderName = data.sender || sourceGroup;
+                    deps.injectPrompt(data.chatJid, data.text, senderName);
+                    logger.info(
+                      {
+                        chatJid: data.chatJid,
+                        sourceGroup,
+                        sender: senderName,
+                      },
+                      'IPC message injected into target session',
+                    );
+                  }
                 } else {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },

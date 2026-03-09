@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  secrets?: Record<string, string>;
 }
 
 interface ContainerOutput {
@@ -178,6 +179,200 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       log(`Archived conversation to ${filePath}`);
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return {};
+  };
+}
+
+// Secrets to strip from Bash tool subprocess environments.
+// These are needed by claude-code for API auth but should never
+// be visible to commands Kit runs.
+const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+
+function createSanitizeBashHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: {
+          ...(preInput.tool_input as Record<string, unknown>),
+          command: unsetPrefix + command,
+        },
+      },
+    };
+  };
+}
+
+// === Secret Leak Prevention ===
+// Regex patterns that match common secret formats.
+// Applied to all tool inputs when using external providers.
+const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  { name: 'AWS Access Key', pattern: /AKIA[0-9A-Z]{16}/ },
+  // AWS Secret Access Key: require variable-name context to avoid matching arbitrary
+  // 40-char base64 strings (e.g. hashes, UUIDs). The key is always 40 chars of
+  // [A-Za-z0-9/+] but only meaningful when adjacent to the known variable names.
+  { name: 'AWS Secret Key', pattern: /(?:AWS_SECRET_ACCESS_KEY|aws_secret_access_key|SecretAccessKey)['":\s=]+[A-Za-z0-9/+]{40}/ },
+  { name: 'GitHub Token', pattern: /gh[pousr]_[A-Za-z0-9_]{36,}/ },
+  { name: 'GitHub Classic Token', pattern: /ghp_[A-Za-z0-9]{36}/ },
+  { name: 'Slack Token', pattern: /xox[bpasr]-[0-9A-Za-z-]+/ },
+  { name: 'Anthropic API Key', pattern: /sk-ant-[A-Za-z0-9_-]{20,}/ },
+  { name: 'OpenAI API Key', pattern: /sk-[A-Za-z0-9]{20,}/ },
+  { name: 'xAI API Key', pattern: /xai-[A-Za-z0-9]{20,}/ },
+  { name: 'Generic API Key', pattern: /['\"]?(?:api[_-]?key|apikey|secret[_-]?key|access[_-]?token)['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-/.+]{20,}['\"]/i },
+  { name: 'Private Key', pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
+  { name: 'OAuth Token', pattern: /ya29\.[0-9A-Za-z_-]+/ },
+  { name: 'Connection String', pattern: /(?:mongodb|postgres|mysql|redis):\/\/[^\s'"]+@[^\s'"]+/ },
+  { name: '1Password Reference', pattern: /op:\/\/[^\s'"]+/ },
+];
+
+/**
+ * Build a set of literal secret values from containerInput.secrets.
+ * These are exact-matched against tool inputs for redaction.
+ */
+function buildSecretValues(secrets: Record<string, string> | undefined): Set<string> {
+  const values = new Set<string>();
+  if (!secrets) return values;
+  for (const [_key, value] of Object.entries(secrets)) {
+    // Only track values that look like actual secrets (not URLs or short values)
+    if (value && value.length >= 10 && !/^https?:\/\//.test(value)) {
+      values.add(value);
+    }
+  }
+  return values;
+}
+
+/**
+ * Scan text for secret patterns and known secret values.
+ * Returns list of findings, empty if clean.
+ */
+function scanForSecrets(text: string, knownSecrets: Set<string>): string[] {
+  const findings: string[] = [];
+
+  // Check regex patterns
+  for (const { name, pattern } of SECRET_PATTERNS) {
+    if (pattern.test(text)) {
+      findings.push(name);
+    }
+  }
+
+  // Check known secret values (exact substring match)
+  for (const secret of knownSecrets) {
+    if (text.includes(secret)) {
+      findings.push('Known secret value');
+      break; // One match is enough
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Redact known secret values from text.
+ * Replaces exact occurrences with [REDACTED].
+ */
+function redactSecrets(text: string, knownSecrets: Set<string>): string {
+  let result = text;
+  for (const secret of knownSecrets) {
+    if (result.includes(secret)) {
+      result = result.split(secret).join('[REDACTED]');
+    }
+  }
+  return result;
+}
+
+/**
+ * Determine if the current provider is external (not Ollama local).
+ */
+function isExternalProvider(sdkEnv: Record<string, string | undefined>): boolean {
+  const baseUrl = sdkEnv.ANTHROPIC_BASE_URL || '';
+  // Ollama local is safe — no leak risk
+  if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1') || baseUrl.includes('host.docker.internal')) {
+    // host.docker.internal pointing to Ollama is local
+    if (!baseUrl || baseUrl.includes('11434')) return false;
+  }
+  // Default Anthropic API (no ANTHROPIC_BASE_URL set) — trusted provider
+  if (!baseUrl) return false;
+  // Everything else (xAI, OpenAI, etc.) is external
+  return true;
+}
+
+/**
+ * Extract all text from a tool input for scanning.
+ */
+function extractToolInputText(toolInput: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const value of Object.values(toolInput)) {
+    if (typeof value === 'string') {
+      parts.push(value);
+    } else if (typeof value === 'object' && value !== null) {
+      parts.push(JSON.stringify(value));
+    }
+  }
+  return parts.join('\n');
+}
+
+/**
+ * PreToolUse hook: scans all tool inputs for secrets when using external providers.
+ * - Blocks tool calls that contain regex-matched secret patterns
+ * - Redacts known secret values (from containerInput.secrets)
+ * - Only active for external providers (xAI, OpenAI, etc.)
+ * - Ollama local and Anthropic API are trusted (no scanning)
+ */
+function createSecretScannerHook(
+  knownSecrets: Set<string>,
+  isExternal: boolean,
+): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    // Skip scanning for local/trusted providers
+    if (!isExternal) return {};
+
+    const preInput = input as PreToolUseHookInput;
+    const toolInput = preInput.tool_input as Record<string, unknown>;
+    if (!toolInput) return {};
+
+    const text = extractToolInputText(toolInput);
+    if (!text) return {};
+
+    // Scan for secret patterns
+    const findings = scanForSecrets(text, knownSecrets);
+
+    if (findings.length > 0) {
+      const uniqueFindings = [...new Set(findings)];
+      log(`[SECRET-SCANNER] BLOCKED: ${preInput.tool_name} — found: ${uniqueFindings.join(', ')}`);
+
+      // Attempt redaction for known values; block entirely for pattern matches
+      const hasPatternMatch = uniqueFindings.some(f => f !== 'Known secret value');
+      if (hasPatternMatch) {
+        // Block the tool call — pattern match means potential unknown secret
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason: `Secret leak prevention: detected ${uniqueFindings.join(', ')} in tool input. This content cannot be sent to external providers.`,
+          },
+        };
+      }
+
+      // Redact known secret values and allow
+      const redacted = { ...toolInput };
+      for (const [key, value] of Object.entries(redacted)) {
+        if (typeof value === 'string') {
+          redacted[key] = redactSecrets(value, knownSecrets);
+        }
+      }
+      log(`[SECRET-SCANNER] Redacted known secrets in ${preInput.tool_name}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: redacted,
+        },
+      };
     }
 
     return {};
@@ -389,6 +584,13 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Secret leak prevention: build scanner context
+  const knownSecrets = buildSecretValues(containerInput.secrets);
+  const external = isExternalProvider(sdkEnv);
+  if (external) {
+    log(`[SECRET-SCANNER] External provider detected — secret scanning ACTIVE (${knownSecrets.size} known values)`);
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -407,7 +609,8 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__ollama__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -423,9 +626,17 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ollama: {
+          command: 'node',
+          args: [path.join(path.dirname(mcpServerPath), 'ollama-mcp-stdio.js')],
+        },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [createSanitizeBashHook()] },
+          { hooks: [createSecretScannerHook(knownSecrets, external)] },
+        ],
       },
     }
   })) {
@@ -470,6 +681,7 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
+    // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
@@ -481,9 +693,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
-  // No real secrets exist in the container environment.
+  // Build SDK env: merge secrets into process.env for the SDK only.
+  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
+  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
+    sdkEnv[key] = value;
+  }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

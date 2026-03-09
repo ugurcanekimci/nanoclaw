@@ -30,6 +30,8 @@ export interface AllowedRoot {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  /** Set true to pass OPENAI_API_KEY to this group's container (e.g. when SWARM_MODEL=gpt-4o). */
+  openaiEnabled?: boolean;
 }
 
 export interface RegisteredGroup {
@@ -51,6 +53,8 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  /** True for synthetic messages injected by the IPC watcher (agent→agent). */
+  is_ipc_injected?: boolean;
 }
 
 export interface ScheduledTask {
