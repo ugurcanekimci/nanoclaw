@@ -40,10 +40,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import {
-  loadSenderAllowlist,
-  isTriggerAllowed,
-} from './sender-allowlist.js';
+import { loadSenderAllowlist, isTriggerAllowed } from './sender-allowlist.js';
 import {
   getRegisteredChannelNames,
   getChannelFactory,
@@ -127,13 +124,8 @@ async function main(): Promise<void> {
     }
 
     const lastKey = `last_timestamp:${group.folder}`;
-    const lastTimestamp =
-      getRouterState(lastKey) || '1970-01-01T00:00:00.000Z';
-    const messages = getMessagesSince(
-      groupJid,
-      lastTimestamp,
-      ASSISTANT_NAME,
-    );
+    const lastTimestamp = getRouterState(lastKey) || '1970-01-01T00:00:00.000Z';
+    const messages = getMessagesSince(groupJid, lastTimestamp, ASSISTANT_NAME);
 
     if (messages.length === 0) {
       logger.debug({ groupJid }, 'No new messages');
@@ -143,9 +135,7 @@ async function main(): Promise<void> {
     // Trigger check
     const requiresTrigger = group.requiresTrigger !== false && !group.isMain;
     const triggered = requiresTrigger
-      ? messages.some(
-          (m) => !m.is_from_me && TRIGGER_PATTERN.test(m.content),
-        )
+      ? messages.some((m) => !m.is_from_me && TRIGGER_PATTERN.test(m.content))
       : true;
 
     if (!triggered) {
@@ -220,12 +210,7 @@ async function main(): Promise<void> {
           assistantName: ASSISTANT_NAME,
         },
         (proc, containerName) => {
-          queue.registerProcess(
-            groupJid,
-            proc,
-            containerName,
-            group.folder,
-          );
+          queue.registerProcess(groupJid, proc, containerName, group.folder);
         },
         async (streamedOutput) => {
           if (streamedOutput.result) {
@@ -280,7 +265,13 @@ async function main(): Promise<void> {
           storeMessage(msg);
           queue.enqueueMessageCheck(chatJid);
         },
-        onChatMetadata: (chatJid, timestamp, chatName, channelName, isGroup) => {
+        onChatMetadata: (
+          chatJid,
+          timestamp,
+          chatName,
+          channelName,
+          isGroup,
+        ) => {
           storeChatMetadata(chatJid, timestamp, chatName, channelName, isGroup);
         },
         registeredGroups,
