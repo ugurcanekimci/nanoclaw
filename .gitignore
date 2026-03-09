@@ -40,15 +40,14 @@ build/Release
 # Dependency directories
 node_modules/
 jspm_packages/
+.npm
+.npm-cache/
 
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/
 
 # TypeScript cache
 *.tsbuildinfo
-
-# Optional npm cache directory
-.npm
 
 # Optional eslint cache
 .eslintcache
@@ -81,6 +80,7 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
+dist/
 .output
 
 # Gatsby files
@@ -146,3 +146,34 @@ vite.config.ts.timestamp-*
 # Project-specific
 data/cache/
 data/transcripts/*.md
+
+# Local data & auth
+store/
+data/
+
+# Groups - only track base structure and specific CLAUDE.md files
+groups/*
+!groups/main/
+!groups/global/
+groups/main/*
+groups/global/*
+!groups/main/CLAUDE.md
+!groups/global/CLAUDE.md
+
+# Secrets
+*.keys.json
+
+# Temp files
+.tmp-*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Skills system (local per-installation state)
+.nanoclaw/
+
+agents-sdk-docs
