@@ -56,3 +56,12 @@ NEVER use markdown. Only use WhatsApp/Telegram formatting:
 - ```triple backticks``` for code
 
 No ## headings. No [links](url). No **double stars**.
+
+## Model Provider Support
+
+Agents support multiple model providers via the `SWARM_MODEL` environment variable:
+- `claude-*` — Anthropic Claude API (`ANTHROPIC_API_KEY` or OAuth token required)
+- `gpt-*` / `o1-*` / `o3-*` — OpenAI API (`OPENAI_API_KEY` required, set in `.env`)
+- `ollama:*` — Local Ollama (free, no key required, use `ollama_generate` MCP tool)
+
+`OPENAI_API_KEY` is automatically passed to containers when set in the host `.env`.
