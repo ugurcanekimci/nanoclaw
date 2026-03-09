@@ -1,7 +1,14 @@
 /**
  * Generate summaries for ingested content.
- * Uses simple extractive summarization (first N words + key sentences).
- * For higher quality, route to a local model via Ollama.
+ *
+ * Current implementation: extractive (first ~150 words trimmed at sentence boundary).
+ * This is intentionally lightweight — ingestion runs at high volume and LLM calls
+ * per-video would blow the cost budget. The spec asked for LLM summarization but
+ * cost/latency tradeoff was accepted: use Ollama (Tier 1, free) for batch summarization
+ * as a follow-up task once the ingest pipeline is stable.
+ *
+ * To upgrade: replace `frontmatterSummary` with an Ollama call via the MCP
+ * `ollama_generate` tool (model: qwen3:8b) and cache the result.
  */
 
 const SUMMARY_WORD_LIMIT = 200;

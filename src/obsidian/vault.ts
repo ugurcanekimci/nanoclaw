@@ -74,6 +74,7 @@ export async function writeYouTubeTranscript(params: {
   fullText: string;
   summary?: string;
   tags?: string[];
+  fetchedAt?: string;
 }): Promise<string> {
   const frontmatter = {
     type: "youtube-transcript",
@@ -85,7 +86,7 @@ export async function writeYouTubeTranscript(params: {
     duration: params.durationSeconds,
     wordCount: params.wordCount,
     summary: params.summary || "",
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: params.fetchedAt || new Date().toISOString(),
     tags: params.tags || [],
     relatedPosts: [],
   };
@@ -96,6 +97,10 @@ export async function writeYouTubeTranscript(params: {
     `**Channel:** ${params.channelName || "Unknown"}`,
     `**URL:** ${params.url}`,
     `**Duration:** ${params.durationSeconds}s | **Words:** ${params.wordCount}`,
+    "",
+    "## Summary",
+    "",
+    params.summary || "",
     "",
     "## Transcript",
     "",

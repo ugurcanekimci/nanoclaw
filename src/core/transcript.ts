@@ -20,6 +20,30 @@ export function extractVideoId(urlOrId: string): string {
   throw new Error(`Cannot extract video ID from: ${urlOrId}`);
 }
 
+interface OEmbedMeta {
+  title: string;
+  channelName: string;
+}
+
+/**
+ * Fetch video title and channel name via YouTube oEmbed API (no API key required).
+ * Returns empty strings on failure so ingest continues gracefully.
+ */
+async function fetchOEmbedMeta(videoId: string): Promise<OEmbedMeta> {
+  try {
+    const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const res = await fetch(url);
+    if (!res.ok) return { title: "", channelName: "" };
+    const data = await res.json() as { title?: string; author_name?: string };
+    return {
+      title: data.title || "",
+      channelName: data.author_name || "",
+    };
+  } catch {
+    return { title: "", channelName: "" };
+  }
+}
+
 /**
  * Fetch a YouTube transcript with automatic Apify fallback on non-rate-limit errors.
  */
@@ -57,13 +81,16 @@ export async function getTranscript(
   }
 
   const fullText = segmentsToText(segments);
+  const meta = await fetchOEmbedMeta(videoId);
+  const fetchedAt = new Date().toISOString();
 
   return {
     videoId,
-    title: "",
+    title: meta.title,
+    channelName: meta.channelName,
     url,
     language,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
     durationSeconds: totalDuration(segments),
     segments,
     fullText,

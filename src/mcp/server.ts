@@ -1,6 +1,5 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { getTranscript } from "../core/transcript.js";
 import { batchFetch } from "../core/batch.js";
 import { writeResearch, readNote } from "../obsidian/vault.js";
 import { listRecent, listByTag, type IndexEntry } from "../obsidian/index-manager.js";
@@ -28,7 +27,11 @@ export const transcriptMcpServer = createSdkMcpServer({
       },
       async (args) => {
         const entry = await ingestYouTubeVideo(args.url, args.language, args.tags);
-        const transcript = await getTranscript(args.url, args.language);
+        // Read transcript body from vault — avoids a redundant network round-trip
+        const note = await readNote("youtube", `${entry.id}.md`);
+        const transcriptSection = note
+          ? note.slice(note.indexOf("## Transcript"))
+          : entry.summary || "";
 
         const output = [
           `# ${entry.title || entry.id}`,
@@ -37,10 +40,30 @@ export const transcriptMcpServer = createSdkMcpServer({
           `Tags: ${entry.tags.join(", ")}`,
           `Stored: [[youtube/${entry.id}]]`,
           "",
-          truncateToTokenBudget(transcript.fullText, 3000, "use get_transcript for full content"),
+          truncateToTokenBudget(transcriptSection, 3000, "use kb_read for full content"),
         ].join("\n");
 
         return { content: [{ type: "text" as const, text: output }] };
+      },
+    ),
+
+    tool(
+      "ingest_youtube",
+      "Fetch a YouTube video transcript, summarize, and store in the Obsidian knowledge base. Use for on-demand ingest of a specific video.",
+      {
+        url: z.string().describe("YouTube video URL or video ID"),
+        language: z.string().default("en").describe("Transcript language code"),
+        tags: z.array(z.string()).default([]).describe("Tags for categorization"),
+      },
+      async (args) => {
+        const entry = await ingestYouTubeVideo(args.url, args.language, args.tags);
+        const text = [
+          `Ingested: ${entry.title || entry.id}`,
+          `Channel: ${entry.channel || "Unknown"} | Duration: ${entry.duration}s | Words: ${entry.wordCount}`,
+          `Tags: ${entry.tags.join(", ")}`,
+          `Stored: [[youtube/${entry.id}]]`,
+        ].join("\n");
+        return { content: [{ type: "text" as const, text }] };
       },
     ),
 

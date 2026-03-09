@@ -12,6 +12,7 @@ export interface YouTubeSource {
   name: string;
   tags: string[];
   schedule: string; // cron expression
+  language?: string; // transcript language, defaults to "en"
 }
 
 export interface XSource {

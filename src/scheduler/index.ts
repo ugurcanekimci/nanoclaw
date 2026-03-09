@@ -6,6 +6,7 @@
 import * as cron from "node-cron";
 import { loadSources, type SourceConfig } from "../ingest/sources.js";
 import { ingestUserTimeline, ingestSearchTweets } from "../ingest/x-twitter.js";
+import { ingestYouTubeVideo, getChannelRecentVideos } from "../ingest/youtube.js";
 import { appendHistory, readHistory, type HistoryEntry } from "./history.js";
 
 interface ScheduledJob {
@@ -110,13 +111,31 @@ function registerSourceJobs(sources: SourceConfig): void {
     );
   }
 
-  // TODO: add youtube: jobs here when YouTube channel polling is implemented
-  // TODO: add rss: jobs here when RSS ingestion is implemented
-  // TODO: add github: jobs here when GitHub ingestion is implemented
-  // TODO: add substack: jobs here when Substack ingestion is implemented
-  if (sources.youtube.length > 0) {
-    console.log(`[scheduler] ${sources.youtube.length} YouTube source(s) configured but YouTube polling not yet implemented — skipping`);
+  // YouTube channel polling — poll RSS feed for recent videos every N hours per source
+  for (const yt of sources.youtube) {
+    const schedule = yt.schedule || "0 */6 * * *";
+    registerJob(
+      `youtube:${slugify(yt.name || yt.channelId)}`,
+      schedule,
+      "youtube",
+      yt.name || yt.channelId,
+      async () => {
+        const videoIds = await getChannelRecentVideos(yt.channelId);
+        const errors: string[] = [];
+        let items = 0;
+        for (const id of videoIds) {
+          try {
+            await ingestYouTubeVideo(id, yt.language ?? "en", yt.tags);
+            items++;
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
+          }
+        }
+        return { items, errors };
+      },
+    );
   }
+  // TODO: add rss: jobs here when RSS ingestion is implemented
   if (sources.rssFeeds.length > 0) {
     console.log(`[scheduler] ${sources.rssFeeds.length} RSS source(s) configured but RSS ingestion not yet implemented — skipping`);
   }
