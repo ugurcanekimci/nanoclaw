@@ -348,7 +348,7 @@ export const transcriptMcpServer = createSdkMcpServer({
           };
         }
 
-        const host = process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
+        const host = process.env.LANGFUSE_BASEURL || "https://cloud.langfuse.com";
         const sessionUrl = `${host}/sessions/${encodeURIComponent(args.session_id)}`;
         const text = [
           `LangFuse session: ${args.session_id}`,
