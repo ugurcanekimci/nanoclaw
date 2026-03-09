@@ -14,5 +14,6 @@
   "blockedPatterns": [
     ".ssh", ".gnupg", ".aws", ".docker", "credentials",
     ".env", "*.pem", "*.key", "node_modules"
-  ]
+  ],
+  "nonMainReadOnly": true
 }

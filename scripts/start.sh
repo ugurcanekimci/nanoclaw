@@ -100,6 +100,10 @@ else
 fi
 echo ""
 
+# Resolve API port from .env before doing the rest of the startup.
+PORT_VALUE="$(awk -F= '/^PORT=/{print $2}' "$NANOCLAW_DIR/.env" | tail -1)"
+PORT_VALUE="${PORT_VALUE:-3100}"
+
 # ─── Step 2: Mount Allowlist ─────────────────────────────────────────
 
 echo "[2/5] Installing mount allowlist..."
@@ -143,6 +147,13 @@ else
 fi
 
 echo ""
+
+if lsof -nP -iTCP:"$PORT_VALUE" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "  WARNING: Port $PORT_VALUE is already in use."
+  echo "  NanoClaw will continue and skip its embedded API if another Swarm API is already listening."
+  lsof -nP -iTCP:"$PORT_VALUE" -sTCP:LISTEN || true
+  echo ""
+fi
 
 echo "Starting NanoClaw..."
 echo ""
