@@ -348,10 +348,7 @@ export async function runContainerAgent(
   );
 
   // ── Observability: container lifecycle span ──
-  const sampled =
-    input.traceContext && shouldSample()
-      ? true
-      : false;
+  const sampled = input.traceContext && shouldSample() ? true : false;
   const langfuse = getLangfuse();
   // Link to the parent trace from OBS-03 (or create standalone if no parent)
   const lifecycleTrace = sampled
@@ -564,7 +561,12 @@ export async function runContainerAgent(
         const durationMs = Date.now() - startTime;
         lifecycleSpan.event({
           name: 'exit',
-          metadata: { exitCode, outcome, durationMs, outputChunks: outputChunkSeq },
+          metadata: {
+            exitCode,
+            outcome,
+            durationMs,
+            outputChunks: outputChunkSeq,
+          },
         });
         lifecycleSpan.end();
       }
@@ -749,7 +751,10 @@ export async function runContainerAgent(
           'Container completed',
         );
 
-        endLifecycleSpan(output.status === 'success' ? 'success' : 'error', code);
+        endLifecycleSpan(
+          output.status === 'success' ? 'success' : 'error',
+          code,
+        );
         resolve(output);
       } catch (err) {
         logger.error(
