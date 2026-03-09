@@ -7,6 +7,8 @@ import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import type { TraceContext } from './observability/context.js';
+import { deserializeTraceContext } from './observability/context.js';
 import { AvailableGroup, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -128,6 +130,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              // Recover trace context from IPC message for cross-agent linking
+              const parentTrace: TraceContext | null = data.traceContext
+                ? deserializeTraceContext(
+                    typeof data.traceContext === 'string'
+                      ? data.traceContext
+                      : JSON.stringify(data.traceContext),
+                  )
+                : null;
+              if (parentTrace) {
+                logger.debug(
+                  { traceId: parentTrace.traceId, sourceGroup },
+                  'IPC message carries trace context',
+                );
+              }
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];

@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { createTraceContext } from './observability/context.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -168,6 +169,14 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
+  const traceContext = createTraceContext({
+    source: 'scheduler',
+    chatJid: task.chat_jid,
+    groupFolder: task.group_folder,
+    taskId: task.id,
+    sessionId: sessionId ?? undefined,
+  });
+
   try {
     const output = await runContainerAgent(
       group,
@@ -179,6 +188,7 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
+        traceContext,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

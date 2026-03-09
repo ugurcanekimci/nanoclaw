@@ -28,6 +28,8 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { serializeTraceContext } from './observability/context.js';
+import type { TraceContext } from './observability/context.js';
 import { AvailableGroup, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -42,6 +44,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  traceContext?: TraceContext;
 }
 
 export interface ContainerOutput {
@@ -308,6 +311,17 @@ export async function runContainerAgent(
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName, group);
+
+  // Propagate trace context as env var (metadata only, no secrets)
+  if (input.traceContext) {
+    const idx = containerArgs.indexOf(CONTAINER_IMAGE);
+    containerArgs.splice(
+      idx,
+      0,
+      '-e',
+      `NANOCLAW_TRACE_CONTEXT=${serializeTraceContext(input.traceContext)}`,
+    );
+  }
 
   logger.debug(
     {

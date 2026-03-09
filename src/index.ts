@@ -47,11 +47,16 @@ import {
 } from './channels/registry.js';
 import { routeOutbound, formatMessages, formatOutbound } from './router.js';
 import { logger } from './logger.js';
+import { createTraceContext } from './observability/context.js';
+import { initLangfuse, shutdownLangfuse } from './observability/langfuse.js';
 import { startSwarmApi } from './swarm-api.js';
 import type { Channel, NewMessage, RegisteredGroup } from './types.js';
 
 async function main(): Promise<void> {
   logger.info('Starting NanoClaw runtime');
+
+  // ── Observability ──
+  initLangfuse();
 
   // ── Database ──
   initDatabase();
@@ -198,6 +203,13 @@ async function main(): Promise<void> {
       await channel.setTyping(groupJid, true).catch(() => {});
     }
 
+    const traceContext = createTraceContext({
+      source: 'user',
+      chatJid: groupJid,
+      groupFolder: group.folder,
+      sessionId: sessionId ?? undefined,
+    });
+
     try {
       const output = await runContainerAgent(
         group,
@@ -208,6 +220,7 @@ async function main(): Promise<void> {
           chatJid: groupJid,
           isMain,
           assistantName: ASSISTANT_NAME,
+          traceContext,
         },
         (proc, containerName) => {
           queue.registerProcess(groupJid, proc, containerName, group.folder);
@@ -321,6 +334,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     logger.info('Shutting down...');
+    await shutdownLangfuse();
     await queue.shutdown(30_000);
     for (const ch of channels) {
       await ch.disconnect().catch(() => {});
