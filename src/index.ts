@@ -169,8 +169,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = missedMessages.some(
       (m) =>
-        TRIGGER_PATTERN.test(m.content.trim()) &&
-        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+        // IPC-injected messages bypass the trigger gate — trusted agent prompts.
+        m.is_ipc_injected ||
+        (TRIGGER_PATTERN.test(m.content.trim()) &&
+          (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg))),
     );
     if (!hasTrigger) return true;
   }
@@ -397,9 +399,10 @@ async function startMessageLoop(): Promise<void> {
             const allowlistCfg = loadSenderAllowlist();
             const hasTrigger = groupMessages.some(
               (m) =>
-                TRIGGER_PATTERN.test(m.content.trim()) &&
-                (m.is_from_me ||
-                  isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+                m.is_ipc_injected ||
+                (TRIGGER_PATTERN.test(m.content.trim()) &&
+                  (m.is_from_me ||
+                    isTriggerAllowed(chatJid, m.sender, allowlistCfg))),
             );
             if (!hasTrigger) continue;
           }
@@ -562,6 +565,26 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
+    },
+    injectPrompt: (chatJid, text, sender) => {
+      // Store as a synthetic inbound message from another agent.
+      // is_ipc_injected: true — trusted agent prompt; bypasses the requiresTrigger
+      //   gate and bot/prefix SQL filters without content manipulation.
+      // is_from_me: false — this is an incoming prompt TO this group's agent.
+      // is_bot_message: false — belt-and-suspenders; IPC filter now takes precedence.
+      storeMessage({
+        id: `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        chat_jid: chatJid,
+        sender,
+        sender_name: sender,
+        content: text,
+        timestamp: new Date().toISOString(),
+        is_from_me: false,
+        is_bot_message: false,
+        is_ipc_injected: true,
+      });
+      // Wake up the message loop for this group immediately
+      queue.enqueueMessageCheck(chatJid);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
