@@ -17,16 +17,17 @@ services:
       - PROXY_PORT=${PROXY_PORT:-}
       - PROXY_USER=${PROXY_USER:-}
       - PROXY_PASS=${PROXY_PASS:-}
-    depends_on:
-      - crawl4ai
     restart: unless-stopped
 
-  # Crawl4AI — self-hosted scraping engine (Bright Data replacement)
+  # Crawl4AI — self-hosted scraping engine (on-demand only)
+  # Pinned to v0.8.0 digest (patches CVE-2026-26216 RCE + CVE-2026-26217 LFI)
+  # Start: docker compose --profile scraping up crawl4ai -d
   crawl4ai:
-    image: unclecode/crawl4ai:latest
+    image: unclecode/crawl4ai@sha256:4d8b065bf185962733cb5f9701f4122d03383fa1ab6b5f6a9873f04fa0416a84
     ports:
-      - "11235:11235"
-    restart: unless-stopped
+      - "127.0.0.1:11235:11235"
+    profiles:
+      - scraping
 
   # Camoufox — anti-detect browser REST API (for protected sites)
   camofox:

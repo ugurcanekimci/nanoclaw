@@ -128,11 +128,27 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const TRACE_EVENT_START_MARKER = '---NANOCLAW_TRACE_EVENT---';
+const TRACE_EVENT_END_MARKER = '---NANOCLAW_TRACE_EVENT_END---';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
+}
+
+/**
+ * Emit a structured trace event via stdout for the host to collect.
+ * The container has no Langfuse client — events are parsed by the host's
+ * container-runner (OBS-04) and stitched into the trace tree.
+ */
+function emitTraceEvent(
+  name: string,
+  metadata: Record<string, unknown>,
+): void {
+  console.log(TRACE_EVENT_START_MARKER);
+  console.log(JSON.stringify({ name, metadata, timestamp: Date.now() }));
+  console.log(TRACE_EVENT_END_MARKER);
 }
 
 function log(message: string): void {
@@ -403,6 +419,11 @@ function createSecretScannerHook(
       log(
         `[SECRET-SCANNER] BLOCKED: ${preInput.tool_name} — found: ${uniqueFindings.join(', ')}`,
       );
+      emitTraceEvent('hook-block', {
+        hook: 'secret-scanner',
+        tool: preInput.tool_name,
+        findings: uniqueFindings,
+      });
 
       // Attempt redaction for known values; block entirely for pattern matches
       const hasPatternMatch = uniqueFindings.some(
@@ -528,6 +549,11 @@ function createGitSafetyHook(groupFolder: string): HookCallback {
         const reason = `Blocked: destructive git operation not permitted for ${groupFolder}`;
         auditGitCommand(command, true, groupFolder, reason);
         log(`[GIT-SAFETY] ${reason}: ${command.slice(0, 200)}`);
+        emitTraceEvent('hook-block', {
+          hook: 'git-safety',
+          group: groupFolder,
+          commandPrefix: command.slice(0, 100),
+        });
         return {
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
@@ -772,6 +798,17 @@ async function runQuery(
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
 }> {
+  const queryStartTime = Date.now();
+  const hasTraceContext = !!containerInput.traceContext;
+
+  if (hasTraceContext) {
+    emitTraceEvent('query-start', {
+      iteration: sessionId ? 'resume' : 'initial',
+      promptLength: prompt.length,
+      hasSession: !!sessionId,
+    });
+  }
+
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -927,6 +964,9 @@ async function runQuery(
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
+      if (hasTraceContext) {
+        emitTraceEvent('session-init', { sessionId: newSessionId });
+      }
     }
 
     if (
@@ -959,6 +999,17 @@ async function runQuery(
   }
 
   ipcPolling = false;
+
+  const queryDurationMs = Date.now() - queryStartTime;
+  if (hasTraceContext) {
+    emitTraceEvent('query-end', {
+      durationMs: queryDurationMs,
+      messageCount,
+      resultCount,
+      closedDuringQuery,
+    });
+  }
+
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
   );
@@ -991,6 +1042,11 @@ async function main(): Promise<void> {
       log(
         `Trace context: traceId=${containerInput.traceContext.traceId} source=${containerInput.traceContext.source}`,
       );
+      emitTraceEvent('agent-start', {
+        traceId: containerInput.traceContext.traceId,
+        source: containerInput.traceContext.source,
+        groupFolder: containerInput.groupFolder,
+      });
     }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
@@ -1082,6 +1138,11 @@ async function main(): Promise<void> {
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Agent error: ${errorMessage}`);
+    if (containerInput.traceContext) {
+      emitTraceEvent('agent-error', {
+        error: errorMessage.slice(0, 500),
+      });
+    }
     writeOutput({
       status: 'error',
       result: null,

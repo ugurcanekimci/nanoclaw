@@ -36,6 +36,8 @@ import { AvailableGroup, RegisteredGroup } from './types.js';
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const TRACE_EVENT_START_MARKER = '---NANOCLAW_TRACE_EVENT---';
+const TRACE_EVENT_END_MARKER = '---NANOCLAW_TRACE_EVENT_END---';
 
 export interface ContainerInput {
   prompt: string;
@@ -441,9 +443,49 @@ export async function runContainerAgent(
         }
       }
 
-      // Stream-parse for output markers
+      // Stream-parse for output and trace event markers
       if (onOutput) {
         parseBuffer += chunk;
+
+        // Parse trace events emitted by agent-runner (OBS-07)
+        let traceIdx: number;
+        while (
+          (traceIdx = parseBuffer.indexOf(TRACE_EVENT_START_MARKER)) !== -1
+        ) {
+          const traceEndIdx = parseBuffer.indexOf(
+            TRACE_EVENT_END_MARKER,
+            traceIdx,
+          );
+          if (traceEndIdx === -1) break;
+
+          const traceJson = parseBuffer
+            .slice(traceIdx + TRACE_EVENT_START_MARKER.length, traceEndIdx)
+            .trim();
+          parseBuffer =
+            parseBuffer.slice(0, traceIdx) +
+            parseBuffer.slice(traceEndIdx + TRACE_EVENT_END_MARKER.length);
+
+          if (lifecycleSpan) {
+            try {
+              const evt = JSON.parse(traceJson) as {
+                name: string;
+                metadata: Record<string, unknown>;
+                timestamp?: number;
+              };
+              lifecycleSpan.event({
+                name: `agent:${evt.name}`,
+                metadata: evt.metadata,
+                startTime: evt.timestamp ? new Date(evt.timestamp) : undefined,
+              });
+            } catch {
+              logger.debug(
+                { group: group.name },
+                'Failed to parse agent trace event',
+              );
+            }
+          }
+        }
+
         let startIdx: number;
         while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
           const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
