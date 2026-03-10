@@ -37,7 +37,10 @@ export function redactString(value: string): string {
   let result = value;
 
   for (const pattern of SECRET_PATTERNS) {
-    result = result.replace(new RegExp(pattern.source, pattern.flags + 'g'), '[REDACTED]');
+    result = result.replace(
+      new RegExp(pattern.source, pattern.flags + 'g'),
+      '[REDACTED]',
+    );
   }
 
   result = result.replace(HOME_RE, '~');

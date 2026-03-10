@@ -32,53 +32,40 @@
 
 ---
 
-## Task: OBS-11 — Rollout
+## Task: OBS-11 — Rollout — COMPLETED
 
-**Branch**: `feat/obs-11-rollout`
-**Files**: new `docs/observability/langfuse-rollout.md`
+**Branch**: `feat/obs-05-06-ipc-scheduler` (landed alongside prior phases)
 
-### What to implement
+### Deliverables
 
-1. **Staged enablement plan** via `LANGFUSE_SAMPLE_RATE`:
-   - Stage 1: `0.1` (10% of traces) — run for 24h, monitor for errors
-   - Stage 2: `0.5` (50%) — run for 24h
-   - Stage 3: `1.0` (100%) — full rollout
-   - Each stage: check Langfuse dashboard for trace volume, error rate, p95 duration
+1. **Staged enablement plan** — `docs/observability/langfuse-rollout.md`
+   - 3-stage rollout: 10% → 50% → 100% with 24h minimum per stage
+   - Go/no-go criteria per stage (error rate, latency, secret leakage checks)
+   - Rollback procedures (disable, reduce sampling, disable capture)
 
-2. **Dashboard template** — Document a Langfuse dashboard config showing:
-   - Trace volume by entry path (user, ipc, scheduler)
-   - Error rate per trace type
-   - p95 duration per trace type
-   - Agent group breakdown
-   - Hook block events (secret-scanner, git-safety)
+2. **Dashboard template** — 7 panels documented in rollout.md:
+   - Trace volume by entry path, error rate, p95 duration, agent group breakdown
+   - Container lifecycle outcomes, hook block events, MCP tool performance
 
-3. **Alert thresholds**:
-   - Trace error rate > 5%
-   - p95 duration > 60s
-   - Langfuse client errors > 10/min
+3. **Alert thresholds** — 5 alert rules with windows and actions
 
-4. **On-call runbook** — Write `docs/observability/langfuse-runbook.md`:
-   - How to find a trace by session/group
-   - How to read the span waterfall
-   - How to correlate host ↔ container spans (trace events)
-   - Emergency: disable tracing (`LANGFUSE_ENABLED=false`, restart NanoClaw)
-   - How to enable prompt/tool-IO capture for debugging
+4. **On-call runbook** — `docs/observability/langfuse-runbook.md`:
+   - Finding traces by session/group, trace ID, entry path, or error status
+   - Full span waterfall reference for all three trace types
+   - Host ↔ container correlation guide
+   - 5 common diagnostic scenarios with step-by-step resolution
+   - Emergency disable/reduce procedures
 
-5. **Environment variables reference** — update `.env.example` in both repos:
-   ```
-   LANGFUSE_ENABLED=true
-   LANGFUSE_PUBLIC_KEY=pk-lf-...
-   LANGFUSE_SECRET_KEY=sk-lf-...
-   LANGFUSE_BASEURL=http://localhost:3000
-   LANGFUSE_SAMPLE_RATE=1.0
-   LANGFUSE_CAPTURE_PROMPTS=false
-   LANGFUSE_CAPTURE_TOOL_IO=false
-   ```
+5. **Environment variables** — `.env.example` updated in both NanoClaw and Swarm repos
 
-### Acceptance criteria
-- Runbook enables on-call to diagnose failures end-to-end from trace IDs
-- `.env.example` documents all LANGFUSE_ vars
-- Staged rollout plan with clear go/no-go criteria per stage
+## OBS Plan — Complete
+
+All 11 tasks (OBS-01 through OBS-11) are now implemented:
+- Phase 1: Foundation (OBS-01+02) — Langfuse client + trace context
+- Phase 2: Host instrumentation (OBS-03+04+05+06) — message loop, container, IPC, scheduler
+- Phase 3: Container + MCP (OBS-07+08) — agent-runner events, MCP tool wrapping
+- Phase 4: Governance + tests (OBS-09+10) — redaction, 36 tests
+- Phase 5: Rollout (OBS-11) — documentation, staged plan, runbook
 
 ## Full plan reference
 See `docs/OBS-PLAN.md` for the complete OBS-01 through OBS-11 plan.

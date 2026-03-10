@@ -10,9 +10,9 @@ describe('redactString', () => {
   });
 
   it('redacts GitHub tokens', () => {
-    expect(
-      redactString('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij'),
-    ).toContain('[REDACTED]');
+    expect(redactString('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij')).toContain(
+      '[REDACTED]',
+    );
     expect(
       redactString('ghs_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl'),
     ).toContain('[REDACTED]');
@@ -23,30 +23,26 @@ describe('redactString', () => {
   });
 
   it('redacts Anthropic API keys', () => {
-    expect(
-      redactString('sk-ant-api03-ABCDEFGHIJKLMNOPQRST'),
-    ).toContain('[REDACTED]');
+    expect(redactString('sk-ant-api03-ABCDEFGHIJKLMNOPQRST')).toContain(
+      '[REDACTED]',
+    );
   });
 
   it('redacts OpenAI API keys', () => {
-    expect(
-      redactString('sk-ABCDEFGHIJKLMNOPQRSTuvwx'),
-    ).toContain('[REDACTED]');
+    expect(redactString('sk-ABCDEFGHIJKLMNOPQRSTuvwx')).toContain('[REDACTED]');
   });
 
   it('redacts xAI API keys', () => {
-    expect(
-      redactString('xai-ABCDEFGHIJKLMNOPQRSTuvwx'),
-    ).toContain('[REDACTED]');
+    expect(redactString('xai-ABCDEFGHIJKLMNOPQRSTuvwx')).toContain(
+      '[REDACTED]',
+    );
   });
 
   it('redacts private key headers', () => {
     expect(redactString('-----BEGIN RSA PRIVATE KEY-----')).toContain(
       '[REDACTED]',
     );
-    expect(redactString('-----BEGIN PRIVATE KEY-----')).toContain(
-      '[REDACTED]',
-    );
+    expect(redactString('-----BEGIN PRIVATE KEY-----')).toContain('[REDACTED]');
   });
 
   it('redacts OAuth tokens (Google ya29)', () => {
@@ -56,9 +52,9 @@ describe('redactString', () => {
   });
 
   it('redacts connection strings', () => {
-    expect(
-      redactString('postgres://user:pass@host:5432/db'),
-    ).toContain('[REDACTED]');
+    expect(redactString('postgres://user:pass@host:5432/db')).toContain(
+      '[REDACTED]',
+    );
     expect(
       redactString('mongodb://admin:secret@cluster.example.com/mydb'),
     ).toContain('[REDACTED]');
@@ -107,9 +103,9 @@ describe('redactMetadata', () => {
         inner: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij',
       },
     });
-    expect(
-      (result.outer as Record<string, unknown>).inner,
-    ).toContain('[REDACTED]');
+    expect((result.outer as Record<string, unknown>).inner).toContain(
+      '[REDACTED]',
+    );
   });
 
   it('redacts strings in arrays', () => {

@@ -49,14 +49,10 @@ function redactArgs(args: unknown[]): unknown[] {
       );
     }
     if (result.input && typeof result.input === 'object') {
-      result.input = redactMetadata(
-        result.input as Record<string, unknown>,
-      );
+      result.input = redactMetadata(result.input as Record<string, unknown>);
     }
     if (result.output && typeof result.output === 'object') {
-      result.output = redactMetadata(
-        result.output as Record<string, unknown>,
-      );
+      result.output = redactMetadata(result.output as Record<string, unknown>);
     }
     return result;
   });
