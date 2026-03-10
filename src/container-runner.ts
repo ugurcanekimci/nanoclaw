@@ -479,9 +479,23 @@ export async function runContainerAgent(
             };
             // Capture token usage for LangFuse generation (OBS fix-005)
             if (evt.name === 'result-usage') {
+              const inputTokens = (evt.metadata.inputTokens as number) || 0;
+              const outputTokens = (evt.metadata.outputTokens as number) || 0;
               agentModel = evt.metadata.model as string;
-              agentInputTokens += (evt.metadata.inputTokens as number) || 0;
-              agentOutputTokens += (evt.metadata.outputTokens as number) || 0;
+              agentInputTokens += inputTokens;
+              agentOutputTokens += outputTokens;
+              // Create generation immediately — containers are reused between messages,
+              // so endLifecycleSpan() may never fire during normal operation.
+              if (lifecycleTrace && inputTokens > 0) {
+                lifecycleTrace.generation({
+                  name: 'agent-execution',
+                  model: agentModel || 'unknown',
+                  startTime: new Date(startTime),
+                  endTime: new Date(),
+                  usage: { input: inputTokens, output: outputTokens },
+                  metadata: { groupFolder: group.folder },
+                });
+              }
             }
             if (lifecycleSpan) {
               lifecycleSpan.event({
