@@ -67,9 +67,9 @@ describe('redactString', () => {
   });
 
   it('redacts generic API key patterns', () => {
-    expect(
-      redactString('api_key = "sk_FAKE_test0000000000000000"'),
-    ).toContain('[REDACTED]');
+    expect(redactString('api_key = "sk_FAKE_test0000000000000000"')).toContain(
+      '[REDACTED]',
+    );
   });
 
   it('replaces home directory with ~', () => {
