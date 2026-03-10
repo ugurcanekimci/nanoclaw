@@ -411,6 +411,10 @@ export async function runContainerAgent(
     let outputChain = Promise.resolve();
 
     let outputChunkSeq = 0;
+    // Accumulated token usage from agent-runner trace events (OBS fix-005)
+    let agentModel: string | undefined;
+    let agentInputTokens = 0;
+    let agentOutputTokens = 0;
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -465,24 +469,31 @@ export async function runContainerAgent(
             parseBuffer.slice(0, traceIdx) +
             parseBuffer.slice(traceEndIdx + TRACE_EVENT_END_MARKER.length);
 
-          if (lifecycleSpan) {
-            try {
-              const evt = JSON.parse(traceJson) as {
-                name: string;
-                metadata: Record<string, unknown>;
-                timestamp?: number;
-              };
+          try {
+            const evt = JSON.parse(traceJson) as {
+              name: string;
+              metadata: Record<string, unknown>;
+              timestamp?: number;
+            };
+            // Capture token usage for LangFuse generation (OBS fix-005)
+            if (evt.name === 'result-usage') {
+              agentModel = evt.metadata.model as string;
+              agentInputTokens += (evt.metadata.inputTokens as number) || 0;
+              agentOutputTokens +=
+                (evt.metadata.outputTokens as number) || 0;
+            }
+            if (lifecycleSpan) {
               lifecycleSpan.event({
                 name: `agent:${evt.name}`,
                 metadata: evt.metadata,
                 startTime: evt.timestamp ? new Date(evt.timestamp) : undefined,
               });
-            } catch {
-              logger.debug(
-                { group: group.name },
-                'Failed to parse agent trace event',
-              );
             }
+          } catch {
+            logger.debug(
+              { group: group.name },
+              'Failed to parse agent trace event',
+            );
           }
         }
 
@@ -611,6 +622,21 @@ export async function runContainerAgent(
           },
         });
         lifecycleSpan.end();
+      }
+      // Create a LangFuse generation object with token usage (OBS fix-005).
+      // This gives LangFuse real model/token data for cost calculation.
+      if (lifecycleTrace && agentInputTokens > 0) {
+        lifecycleTrace.generation({
+          name: 'agent-execution',
+          model: agentModel || 'unknown',
+          startTime: new Date(startTime),
+          endTime: new Date(),
+          usage: {
+            input: agentInputTokens,
+            output: agentOutputTokens,
+          },
+          metadata: { groupFolder: group.folder },
+        });
       }
     };
 

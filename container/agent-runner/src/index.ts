@@ -837,6 +837,9 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let modelName: string | undefined;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -978,6 +981,20 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Extract token usage from assistant messages for LangFuse generation tracking
+      const assistantMsg = message as {
+        message?: {
+          model?: string;
+          usage?: { input_tokens?: number; output_tokens?: number };
+        };
+      };
+      if (assistantMsg.message?.usage) {
+        totalInputTokens += assistantMsg.message.usage.input_tokens || 0;
+        totalOutputTokens += assistantMsg.message.usage.output_tokens || 0;
+      }
+      if (assistantMsg.message?.model) {
+        modelName = assistantMsg.message.model;
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -1021,6 +1038,14 @@ async function runQuery(
 
   const queryDurationMs = Date.now() - queryStartTime;
   if (hasTraceContext) {
+    // Emit token usage for LangFuse generation tracking (OBS fix-005)
+    if (totalInputTokens > 0 || totalOutputTokens > 0) {
+      emitTraceEvent('result-usage', {
+        model: modelName || sdkEnv.SWARM_MODEL || 'unknown',
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+      });
+    }
     emitTraceEvent('query-end', {
       durationMs: queryDurationMs,
       messageCount,
