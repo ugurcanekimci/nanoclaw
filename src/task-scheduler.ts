@@ -3,6 +3,8 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { createTraceContext } from './observability/context.js';
+import { getLangfuse, shouldSample } from './observability/langfuse.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -80,6 +82,24 @@ async function runTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
+
+  // ── OBS-06: trace this scheduled task run ──
+  const sampled = shouldSample();
+  const langfuse = getLangfuse();
+  const lfTrace = sampled
+    ? langfuse.trace({
+        name: 'scheduled-task',
+        sessionId: task.group_folder,
+        metadata: {
+          taskId: task.id,
+          groupFolder: task.group_folder,
+          scheduleType: task.schedule_type,
+          cronExpr:
+            task.schedule_type === 'cron' ? task.schedule_value : undefined,
+        },
+      })
+    : null;
+
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(task.group_folder);
@@ -91,6 +111,12 @@ async function runTask(
       { taskId: task.id, groupFolder: task.group_folder, error },
       'Task has invalid group folder',
     );
+    if (lfTrace) {
+      lfTrace.event({
+        name: 'error',
+        metadata: { taskId: task.id, error: 'invalid-group-folder' },
+      });
+    }
     logTaskRun({
       task_id: task.id,
       run_at: new Date().toISOString(),
@@ -118,6 +144,12 @@ async function runTask(
       { taskId: task.id, groupFolder: task.group_folder },
       'Group not found for task',
     );
+    if (lfTrace) {
+      lfTrace.event({
+        name: 'error',
+        metadata: { taskId: task.id, error: 'group-not-found' },
+      });
+    }
     logTaskRun({
       task_id: task.id,
       run_at: new Date().toISOString(),
@@ -130,6 +162,7 @@ async function runTask(
   }
 
   // Update tasks snapshot for container to read (filtered by group)
+  const taskResolveStart = Date.now();
   const isMain = group.isMain === true;
   const tasks = getAllTasks();
   writeTasksSnapshot(
@@ -145,6 +178,14 @@ async function runTask(
       next_run: t.next_run,
     })),
   );
+  if (lfTrace) {
+    lfTrace.span({
+      name: 'task-resolve',
+      startTime: new Date(taskResolveStart),
+      endTime: new Date(),
+      output: { groupFound: true, isMain, taskCount: tasks.length },
+    });
+  }
 
   let result: string | null = null;
   let error: string | null = null;
@@ -168,6 +209,16 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
+  const traceContext = createTraceContext({
+    source: 'scheduler',
+    chatJid: task.chat_jid,
+    groupFolder: task.group_folder,
+    taskId: task.id,
+    sessionId: sessionId ?? undefined,
+    parentTraceId: lfTrace?.id,
+  });
+
+  const containerRunStart = Date.now();
   try {
     const output = await runContainerAgent(
       group,
@@ -179,6 +230,7 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
+        traceContext,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
@@ -186,7 +238,19 @@ async function runTask(
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)
+          const fwdStart = Date.now();
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          if (lfTrace) {
+            lfTrace.span({
+              name: 'message-forward',
+              startTime: new Date(fwdStart),
+              endTime: new Date(),
+              output: {
+                chatJid: task.chat_jid,
+                textLength: streamedOutput.result.length,
+              },
+            });
+          }
           scheduleClose();
         }
         if (streamedOutput.status === 'success') {
@@ -200,6 +264,19 @@ async function runTask(
     );
 
     if (closeTimer) clearTimeout(closeTimer);
+
+    if (lfTrace) {
+      lfTrace.span({
+        name: 'container-run',
+        startTime: new Date(containerRunStart),
+        endTime: new Date(),
+        output: {
+          status: output.status,
+          durationMs: Date.now() - containerRunStart,
+          hasResult: output.result !== null && output.result !== undefined,
+        },
+      });
+    }
 
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
@@ -215,6 +292,12 @@ async function runTask(
   } catch (err) {
     if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
+    if (lfTrace) {
+      lfTrace.event({
+        name: 'error',
+        metadata: { taskId: task.id, error },
+      });
+    }
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
 
@@ -236,6 +319,17 @@ async function runTask(
       ? result.slice(0, 200)
       : 'Completed';
   updateTaskAfterRun(task.id, nextRun, resultSummary);
+
+  if (lfTrace) {
+    lfTrace.event({
+      name: 'update-task',
+      metadata: {
+        taskId: task.id,
+        nextRun,
+        status: error ? 'error' : 'success',
+      },
+    });
+  }
 }
 
 let schedulerRunning = false;

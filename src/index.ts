@@ -11,6 +11,7 @@ import './channels/index.js';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  LANGFUSE_CAPTURE_PROMPTS,
   TRIGGER_PATTERN,
   TIMEZONE,
 } from './config.js';
@@ -47,11 +48,21 @@ import {
 } from './channels/registry.js';
 import { routeOutbound, formatMessages, formatOutbound } from './router.js';
 import { logger } from './logger.js';
+import { createTraceContext } from './observability/context.js';
+import {
+  getLangfuse,
+  initLangfuse,
+  shouldSample,
+  shutdownLangfuse,
+} from './observability/langfuse.js';
 import { startSwarmApi } from './swarm-api.js';
 import type { Channel, NewMessage, RegisteredGroup } from './types.js';
 
 async function main(): Promise<void> {
   logger.info('Starting NanoClaw runtime');
+
+  // ── Observability ──
+  initLangfuse();
 
   // ── Database ──
   initDatabase();
@@ -132,16 +143,38 @@ async function main(): Promise<void> {
       return true;
     }
 
+    // ── Observability: trace this turn ──
+    const sampled = shouldSample();
+    const langfuse = getLangfuse();
+    const trace = sampled
+      ? langfuse.trace({
+          name: 'message-turn',
+          sessionId: group.folder,
+          input: { chatJid: groupJid, messageCount: messages.length },
+          metadata: { source: 'user', groupFolder: group.folder },
+        })
+      : null;
+
     // Trigger check
     const requiresTrigger = group.requiresTrigger !== false && !group.isMain;
+    const triggerGateStart = Date.now();
     const triggered = requiresTrigger
       ? messages.some((m) => !m.is_from_me && TRIGGER_PATTERN.test(m.content))
       : true;
 
+    let senderAllowed = true;
     if (!triggered) {
       const lastMsg = messages[messages.length - 1]!;
       setRouterState(lastKey, lastMsg.timestamp);
       logger.debug({ groupJid }, 'Trigger not matched, skipping');
+      if (trace) {
+        trace.span({
+          name: 'trigger-gate',
+          startTime: new Date(triggerGateStart),
+          endTime: new Date(),
+          output: { triggered: false, requiresTrigger, senderAllowed: true },
+        });
+      }
       return true;
     }
 
@@ -154,15 +187,44 @@ async function main(): Promise<void> {
         triggeringMsg &&
         !isTriggerAllowed(groupJid, triggeringMsg.sender, senderAllowlist)
       ) {
+        senderAllowed = false;
         const lastMsg = messages[messages.length - 1]!;
         setRouterState(lastKey, lastMsg.timestamp);
+        if (trace) {
+          trace.span({
+            name: 'trigger-gate',
+            startTime: new Date(triggerGateStart),
+            endTime: new Date(),
+            output: { triggered: true, requiresTrigger, senderAllowed: false },
+          });
+        }
         return true;
       }
     }
 
+    if (trace) {
+      trace.span({
+        name: 'trigger-gate',
+        startTime: new Date(triggerGateStart),
+        endTime: new Date(),
+        output: { triggered: true, requiresTrigger, senderAllowed },
+      });
+    }
+
     // Build prompt
+    const formatStart = Date.now();
     const prompt = formatMessages(messages, TIMEZONE);
     const isMain = group.isMain === true;
+
+    if (trace) {
+      trace.span({
+        name: 'format-messages',
+        startTime: new Date(formatStart),
+        endTime: new Date(),
+        output: { messageCount: messages.length },
+        ...(LANGFUSE_CAPTURE_PROMPTS ? { input: { prompt } } : {}),
+      });
+    }
 
     // Write snapshots for container
     const allTasks = getAllTasks();
@@ -198,6 +260,17 @@ async function main(): Promise<void> {
       await channel.setTyping(groupJid, true).catch(() => {});
     }
 
+    const traceContext = createTraceContext({
+      source: 'user',
+      chatJid: groupJid,
+      groupFolder: group.folder,
+      sessionId: sessionId ?? undefined,
+      ...(trace ? { parentTraceId: trace.id } : {}),
+    });
+
+    const dispatchStart = Date.now();
+    let streamChunkCount = 0;
+
     try {
       const output = await runContainerAgent(
         group,
@@ -208,13 +281,34 @@ async function main(): Promise<void> {
           chatJid: groupJid,
           isMain,
           assistantName: ASSISTANT_NAME,
+          traceContext,
         },
         (proc, containerName) => {
           queue.registerProcess(groupJid, proc, containerName, group.folder);
+          if (trace) {
+            trace.event({
+              name: 'container-started',
+              metadata: { containerName, groupFolder: group.folder },
+            });
+          }
         },
         async (streamedOutput) => {
           if (streamedOutput.result) {
+            streamChunkCount++;
+            const sendStart = Date.now();
             await sendMessage(groupJid, streamedOutput.result);
+            if (trace) {
+              trace.span({
+                name: 'send-message',
+                startTime: new Date(sendStart),
+                endTime: new Date(),
+                output: {
+                  targetJid: groupJid,
+                  messageLength: streamedOutput.result.length,
+                  chunkIndex: streamChunkCount,
+                },
+              });
+            }
             storeMessageDirect({
               id: `bot-${Date.now()}`,
               chat_jid: groupJid,
@@ -228,6 +322,12 @@ async function main(): Promise<void> {
           }
           if (streamedOutput.newSessionId) {
             setSession(group.folder, streamedOutput.newSessionId);
+            if (trace) {
+              trace.event({
+                name: 'session-updated',
+                metadata: { newSessionId: streamedOutput.newSessionId },
+              });
+            }
           }
           if (streamedOutput.status === 'success') {
             queue.notifyIdle(groupJid);
@@ -235,16 +335,57 @@ async function main(): Promise<void> {
         },
       );
 
+      if (trace) {
+        trace.span({
+          name: 'agent-dispatch',
+          startTime: new Date(dispatchStart),
+          endTime: new Date(),
+          output: {
+            status: output.status,
+            streamChunks: streamChunkCount,
+            groupFolder: group.folder,
+          },
+        });
+      }
+
       if (output.newSessionId) {
         setSession(group.folder, output.newSessionId);
+        if (trace) {
+          trace.event({
+            name: 'session-updated',
+            metadata: { newSessionId: output.newSessionId },
+          });
+        }
       }
 
       // Advance timestamp
       const lastMsg = messages[messages.length - 1]!;
       setRouterState(lastKey, lastMsg.timestamp);
+
+      if (trace) {
+        trace.update({ output: { status: output.status } });
+      }
+
       return output.status === 'success';
     } catch (err) {
       logger.error({ groupJid, err }, 'Container execution failed');
+      if (trace) {
+        trace.span({
+          name: 'agent-dispatch',
+          startTime: new Date(dispatchStart),
+          endTime: new Date(),
+          statusMessage: 'error',
+          output: { streamChunks: streamChunkCount },
+        });
+        trace.event({
+          name: 'error',
+          metadata: {
+            error: err instanceof Error ? err.message : 'Unknown error',
+            groupFolder: group.folder,
+          },
+        });
+        trace.update({ output: { status: 'error' } });
+      }
       return false;
     } finally {
       if (channel?.setTyping) {
@@ -313,7 +454,7 @@ async function main(): Promise<void> {
 
   // ── Swarm API (secondary service) ──
 
-  const swarmApi = startSwarmApi();
+  const swarmApi = await startSwarmApi();
 
   logger.info('NanoClaw runtime started');
 
@@ -321,6 +462,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     logger.info('Shutting down...');
+    await shutdownLangfuse();
     await queue.shutdown(30_000);
     for (const ch of channels) {
       await ch.disconnect().catch(() => {});

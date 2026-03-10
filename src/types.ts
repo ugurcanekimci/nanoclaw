@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+// Re-export trace context types for convenience
+export type { TraceContext, TraceSource } from './observability/context.js';
+
 // ── Swarm transcript types ──
 
 // Raw segment from youtube-transcript-plus

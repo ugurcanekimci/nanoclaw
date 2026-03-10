@@ -7,6 +7,9 @@ import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import type { TraceContext } from './observability/context.js';
+import { deserializeTraceContext } from './observability/context.js';
+import { getLangfuse, shouldSample } from './observability/langfuse.js';
 import { AvailableGroup, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -128,13 +131,66 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              // Recover trace context from IPC message for cross-agent linking
+              const parentTrace: TraceContext | null = data.traceContext
+                ? deserializeTraceContext(
+                    typeof data.traceContext === 'string'
+                      ? data.traceContext
+                      : JSON.stringify(data.traceContext),
+                  )
+                : null;
+              if (parentTrace) {
+                logger.debug(
+                  { traceId: parentTrace.traceId, sourceGroup },
+                  'IPC message carries trace context',
+                );
+              }
+
+              // ── OBS-05: trace this IPC file ──
+              const sampled = shouldSample();
+              const trace = sampled
+                ? getLangfuse().trace({
+                    name: 'ipc-process',
+                    sessionId: sourceGroup,
+                    metadata: {
+                      type: data.type || 'unknown',
+                      sourceGroup,
+                      file,
+                      parentTraceId: parentTrace?.traceId,
+                    },
+                  })
+                : null;
+
+              if (trace) {
+                trace.event({
+                  name: 'file-read',
+                  metadata: { type: data.type || 'unknown', sourceGroup },
+                });
+              }
+
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
-                if (
+                const authorized =
                   isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
+                  (targetGroup !== undefined &&
+                    targetGroup.folder === sourceGroup);
+
+                if (trace) {
+                  trace.event({
+                    name: 'auth-check',
+                    metadata: {
+                      authorized,
+                      reason: authorized
+                        ? isMain
+                          ? 'main-group'
+                          : 'own-channel'
+                        : 'unauthorized',
+                    },
+                  });
+                }
+
+                if (authorized) {
                   // Post to Slack (or other channel) for human visibility
                   await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
@@ -142,13 +198,25 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'IPC message sent',
                   );
 
+                  if (trace) {
+                    trace.event({
+                      name: 'send-message',
+                      metadata: {
+                        targetJid: data.chatJid,
+                        textLength: data.text.length,
+                      },
+                    });
+                  }
+
                   // Inject into the target group's agent session directly so the
                   // orchestrator wakes up without relying on the Slack round-trip
                   // (bot messages are filtered out by getNewMessages and never trigger
                   // agent sessions).
+                  let injectReason: string;
                   if (!targetGroup) {
                     // No registered group for this JID — it's a channel-only send.
                     // Nothing to inject.
+                    injectReason = 'no-registered-group';
                     logger.debug(
                       { chatJid: data.chatJid, sourceGroup },
                       'IPC target has no registered agent group — skipping session inject',
@@ -156,6 +224,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   } else if (targetGroup.folder === sourceGroup) {
                     // Self-injection: would cause an infinite loop. Slack send above
                     // already provides visibility; block the session injection.
+                    injectReason = 'self-injection-blocked';
                     logger.warn(
                       { sourceGroup },
                       'Blocked self-targeted IPC injection (loop prevention)',
@@ -163,6 +232,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   } else if (
                     !checkInjectRateLimit(sourceGroup, targetGroup.folder)
                   ) {
+                    injectReason = 'rate-limit-source';
                     logger.warn(
                       { sourceGroup, targetFolder: targetGroup.folder },
                       `IPC injection rate limit exceeded (>${IPC_INJECT_MAX_PER_MINUTE}/min from source to target) — dropping`,
@@ -170,11 +240,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   } else if (
                     !checkPairRateLimit(sourceGroup, targetGroup.folder)
                   ) {
+                    injectReason = 'rate-limit-pair';
                     logger.warn(
                       { sourceGroup, targetFolder: targetGroup.folder },
                       `IPC cross-group injection rate limit exceeded (>${PAIR_INJECT_MAX_PER_MINUTE}/min per pair) — dropping`,
                     );
                   } else {
+                    injectReason = 'injected';
                     const senderName = data.sender || sourceGroup;
                     deps.injectPrompt(data.chatJid, data.text, senderName);
                     logger.info(
@@ -185,6 +257,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       },
                       'IPC message injected into target session',
                     );
+                  }
+
+                  if (trace) {
+                    trace.event({
+                      name: 'inject-decision',
+                      metadata: {
+                        targetGroup: targetGroup?.folder,
+                        injected: injectReason === 'injected',
+                        reason: injectReason,
+                      },
+                    });
                   }
                 } else {
                   logger.warn(
@@ -225,8 +308,31 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(tasksDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+
+              // ── OBS-05: trace task IPC file ──
+              const taskSampled = shouldSample();
+              const taskTrace = taskSampled
+                ? getLangfuse().trace({
+                    name: 'ipc-process',
+                    sessionId: sourceGroup,
+                    metadata: {
+                      type: data.type || 'unknown',
+                      sourceGroup,
+                      file,
+                      isTask: true,
+                    },
+                  })
+                : null;
+
+              if (taskTrace) {
+                taskTrace.event({
+                  name: 'file-read',
+                  metadata: { type: data.type || 'unknown', sourceGroup },
+                });
+              }
+
               // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
+              await processTaskIpc(data, sourceGroup, isMain, deps, taskTrace);
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
@@ -254,6 +360,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
+/** Minimal trace handle for emitting events — accepts Langfuse trace or null. */
+type TraceHandle = {
+  event: (opts: { name: string; metadata: Record<string, unknown> }) => void;
+} | null;
+
 export async function processTaskIpc(
   data: {
     type: string;
@@ -276,8 +387,41 @@ export async function processTaskIpc(
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
   deps: IpcDeps,
+  trace: TraceHandle = null,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
+
+  const emitTaskAction = (
+    action: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    if (trace) {
+      trace.event({
+        name: 'task-action',
+        metadata: {
+          action,
+          taskId: data.taskId,
+          sourceGroup,
+          authorized: true,
+          ...extra,
+        },
+      });
+    }
+  };
+
+  const emitUnauthorized = (action: string) => {
+    if (trace) {
+      trace.event({
+        name: 'task-action',
+        metadata: {
+          action,
+          taskId: data.taskId,
+          sourceGroup,
+          authorized: false,
+        },
+      });
+    }
+  };
 
   switch (data.type) {
     case 'schedule_task':
@@ -367,6 +511,12 @@ export async function processTaskIpc(
           status: 'active',
           created_at: new Date().toISOString(),
         });
+        emitTaskAction('schedule_task', {
+          taskId,
+          targetFolder,
+          scheduleType,
+          contextMode,
+        });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },
           'Task created via IPC',
@@ -379,11 +529,13 @@ export async function processTaskIpc(
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'paused' });
+          emitTaskAction('pause_task');
           logger.info(
             { taskId: data.taskId, sourceGroup },
             'Task paused via IPC',
           );
         } else {
+          emitUnauthorized('pause_task');
           logger.warn(
             { taskId: data.taskId, sourceGroup },
             'Unauthorized task pause attempt',
@@ -397,11 +549,13 @@ export async function processTaskIpc(
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'active' });
+          emitTaskAction('resume_task');
           logger.info(
             { taskId: data.taskId, sourceGroup },
             'Task resumed via IPC',
           );
         } else {
+          emitUnauthorized('resume_task');
           logger.warn(
             { taskId: data.taskId, sourceGroup },
             'Unauthorized task resume attempt',
@@ -415,11 +569,13 @@ export async function processTaskIpc(
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
           deleteTask(data.taskId);
+          emitTaskAction('cancel_task');
           logger.info(
             { taskId: data.taskId, sourceGroup },
             'Task cancelled via IPC',
           );
         } else {
+          emitUnauthorized('cancel_task');
           logger.warn(
             { taskId: data.taskId, sourceGroup },
             'Unauthorized task cancel attempt',
@@ -439,6 +595,7 @@ export async function processTaskIpc(
           break;
         }
         if (!isMain && task.group_folder !== sourceGroup) {
+          emitUnauthorized('update_task');
           logger.warn(
             { taskId: data.taskId, sourceGroup },
             'Unauthorized task update attempt',
@@ -485,6 +642,7 @@ export async function processTaskIpc(
         }
 
         updateTask(data.taskId, updates);
+        emitTaskAction('update_task', { updates: Object.keys(updates) });
         logger.info(
           { taskId: data.taskId, sourceGroup, updates },
           'Task updated via IPC',
@@ -495,6 +653,7 @@ export async function processTaskIpc(
     case 'refresh_groups':
       // Only main group can request a refresh
       if (isMain) {
+        emitTaskAction('refresh_groups');
         logger.info(
           { sourceGroup },
           'Group metadata refresh requested via IPC',
@@ -509,6 +668,7 @@ export async function processTaskIpc(
           new Set(Object.keys(registeredGroups)),
         );
       } else {
+        emitUnauthorized('refresh_groups');
         logger.warn(
           { sourceGroup },
           'Unauthorized refresh_groups attempt blocked',
@@ -519,6 +679,7 @@ export async function processTaskIpc(
     case 'register_group':
       // Only main group can register new groups
       if (!isMain) {
+        emitUnauthorized('register_group');
         logger.warn(
           { sourceGroup },
           'Unauthorized register_group attempt blocked',
@@ -541,6 +702,10 @@ export async function processTaskIpc(
           added_at: new Date().toISOString(),
           containerConfig: data.containerConfig,
           requiresTrigger: data.requiresTrigger,
+        });
+        emitTaskAction('register_group', {
+          jid: data.jid,
+          folder: data.folder,
         });
       } else {
         logger.warn(

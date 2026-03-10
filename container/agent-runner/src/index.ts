@@ -16,8 +16,24 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  HookCallback,
+  PreCompactHookInput,
+  PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+
+interface TraceContext {
+  traceId: string;
+  spanId?: string;
+  sessionId?: string;
+  runId: string;
+  source: 'user' | 'ipc' | 'scheduler';
+  taskId?: string;
+  chatJid?: string;
+  groupFolder?: string;
+}
 
 interface ContainerInput {
   prompt: string;
@@ -28,6 +44,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  traceContext?: TraceContext;
 }
 
 interface ContainerOutput {
@@ -89,7 +106,9 @@ class MessageStream {
         yield this.queue.shift()!;
       }
       if (this.done) return;
-      await new Promise<void>(r => { this.waiting = r; });
+      await new Promise<void>((r) => {
+        this.waiting = r;
+      });
       this.waiting = null;
     }
   }
@@ -99,7 +118,9 @@ async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
     process.stdin.on('end', () => resolve(data));
     process.stdin.on('error', reject);
   });
@@ -107,6 +128,8 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const TRACE_EVENT_START_MARKER = '---NANOCLAW_TRACE_EVENT---';
+const TRACE_EVENT_END_MARKER = '---NANOCLAW_TRACE_EVENT_END---';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -114,11 +137,28 @@ function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_END_MARKER);
 }
 
+/**
+ * Emit a structured trace event via stdout for the host to collect.
+ * The container has no Langfuse client — events are parsed by the host's
+ * container-runner (OBS-04) and stitched into the trace tree.
+ */
+function emitTraceEvent(
+  name: string,
+  metadata: Record<string, unknown>,
+): void {
+  console.log(TRACE_EVENT_START_MARKER);
+  console.log(JSON.stringify({ name, metadata, timestamp: Date.now() }));
+  console.log(TRACE_EVENT_END_MARKER);
+}
+
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
-function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
+function getSessionSummary(
+  sessionId: string,
+  transcriptPath: string,
+): string | null {
   const projectDir = path.dirname(transcriptPath);
   const indexPath = path.join(projectDir, 'sessions-index.json');
 
@@ -128,13 +168,17 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
   }
 
   try {
-    const index: SessionsIndex = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-    const entry = index.entries.find(e => e.sessionId === sessionId);
+    const index: SessionsIndex = JSON.parse(
+      fs.readFileSync(indexPath, 'utf-8'),
+    );
+    const entry = index.entries.find((e) => e.sessionId === sessionId);
     if (entry?.summary) {
       return entry.summary;
     }
   } catch (err) {
-    log(`Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`);
+    log(
+      `Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return null;
@@ -173,12 +217,18 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const filename = `${date}-${name}.md`;
       const filePath = path.join(conversationsDir, filename);
 
-      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
+      const markdown = formatTranscriptMarkdown(
+        messages,
+        summary,
+        assistantName,
+      );
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
     } catch (err) {
-      log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     return {};
@@ -217,17 +267,31 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   // AWS Secret Access Key: require variable-name context to avoid matching arbitrary
   // 40-char base64 strings (e.g. hashes, UUIDs). The key is always 40 chars of
   // [A-Za-z0-9/+] but only meaningful when adjacent to the known variable names.
-  { name: 'AWS Secret Key', pattern: /(?:AWS_SECRET_ACCESS_KEY|aws_secret_access_key|SecretAccessKey)['":\s=]+[A-Za-z0-9/+]{40}/ },
+  {
+    name: 'AWS Secret Key',
+    pattern:
+      /(?:AWS_SECRET_ACCESS_KEY|aws_secret_access_key|SecretAccessKey)['":\s=]+[A-Za-z0-9/+]{40}/,
+  },
   { name: 'GitHub Token', pattern: /gh[pousr]_[A-Za-z0-9_]{36,}/ },
   { name: 'GitHub Classic Token', pattern: /ghp_[A-Za-z0-9]{36}/ },
   { name: 'Slack Token', pattern: /xox[bpasr]-[0-9A-Za-z-]+/ },
   { name: 'Anthropic API Key', pattern: /sk-ant-[A-Za-z0-9_-]{20,}/ },
   { name: 'OpenAI API Key', pattern: /sk-[A-Za-z0-9]{20,}/ },
   { name: 'xAI API Key', pattern: /xai-[A-Za-z0-9]{20,}/ },
-  { name: 'Generic API Key', pattern: /['\"]?(?:api[_-]?key|apikey|secret[_-]?key|access[_-]?token)['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-/.+]{20,}['\"]/i },
-  { name: 'Private Key', pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
+  {
+    name: 'Generic API Key',
+    pattern:
+      /['\"]?(?:api[_-]?key|apikey|secret[_-]?key|access[_-]?token)['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-/.+]{20,}['\"]/i,
+  },
+  {
+    name: 'Private Key',
+    pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+  },
   { name: 'OAuth Token', pattern: /ya29\.[0-9A-Za-z_-]+/ },
-  { name: 'Connection String', pattern: /(?:mongodb|postgres|mysql|redis):\/\/[^\s'"]+@[^\s'"]+/ },
+  {
+    name: 'Connection String',
+    pattern: /(?:mongodb|postgres|mysql|redis):\/\/[^\s'"]+@[^\s'"]+/,
+  },
   { name: '1Password Reference', pattern: /op:\/\/[^\s'"]+/ },
 ];
 
@@ -235,7 +299,9 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
  * Build a set of literal secret values from containerInput.secrets.
  * These are exact-matched against tool inputs for redaction.
  */
-function buildSecretValues(secrets: Record<string, string> | undefined): Set<string> {
+function buildSecretValues(
+  secrets: Record<string, string> | undefined,
+): Set<string> {
   const values = new Set<string>();
   if (!secrets) return values;
   for (const [_key, value] of Object.entries(secrets)) {
@@ -289,10 +355,16 @@ function redactSecrets(text: string, knownSecrets: Set<string>): string {
 /**
  * Determine if the current provider is external (not Ollama local).
  */
-function isExternalProvider(sdkEnv: Record<string, string | undefined>): boolean {
+function isExternalProvider(
+  sdkEnv: Record<string, string | undefined>,
+): boolean {
   const baseUrl = sdkEnv.ANTHROPIC_BASE_URL || '';
   // Ollama local is safe — no leak risk
-  if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1') || baseUrl.includes('host.docker.internal')) {
+  if (
+    baseUrl.includes('localhost') ||
+    baseUrl.includes('127.0.0.1') ||
+    baseUrl.includes('host.docker.internal')
+  ) {
     // host.docker.internal pointing to Ollama is local
     if (!baseUrl || baseUrl.includes('11434')) return false;
   }
@@ -344,10 +416,19 @@ function createSecretScannerHook(
 
     if (findings.length > 0) {
       const uniqueFindings = [...new Set(findings)];
-      log(`[SECRET-SCANNER] BLOCKED: ${preInput.tool_name} — found: ${uniqueFindings.join(', ')}`);
+      log(
+        `[SECRET-SCANNER] BLOCKED: ${preInput.tool_name} — found: ${uniqueFindings.join(', ')}`,
+      );
+      emitTraceEvent('hook-block', {
+        hook: 'secret-scanner',
+        tool: preInput.tool_name,
+        findings: uniqueFindings,
+      });
 
       // Attempt redaction for known values; block entirely for pattern matches
-      const hasPatternMatch = uniqueFindings.some(f => f !== 'Known secret value');
+      const hasPatternMatch = uniqueFindings.some(
+        (f) => f !== 'Known secret value',
+      );
       if (hasPatternMatch) {
         // Block the tool call — pattern match means potential unknown secret
         return {
@@ -412,17 +493,17 @@ const REVIEW_BLOCKED_GH: RegExp[] = [
   /gh\s+pr\s+close\b/,
 ];
 
-const DEFAULT_BLOCKED_GIT: RegExp[] = [
-  /\bgit\s+/,
-];
+const DEFAULT_BLOCKED_GIT: RegExp[] = [/\bgit\s+/];
 
 const DEFAULT_BLOCKED_GH: RegExp[] = [
   /gh\s+pr\s+(merge|create|close|review)\b/,
 ];
 
 function getGitBlocklist(groupFolder: string): { git: RegExp[]; gh: RegExp[] } {
-  if (groupFolder.endsWith('-coder')) return { git: CODER_BLOCKED_GIT, gh: CODER_BLOCKED_GH };
-  if (groupFolder.endsWith('-review')) return { git: REVIEW_BLOCKED_GIT, gh: REVIEW_BLOCKED_GH };
+  if (groupFolder.endsWith('-coder'))
+    return { git: CODER_BLOCKED_GIT, gh: CODER_BLOCKED_GH };
+  if (groupFolder.endsWith('-review'))
+    return { git: REVIEW_BLOCKED_GIT, gh: REVIEW_BLOCKED_GH };
   // Orchestrator (main) can run gh pr merge but not destructive git ops
   if (groupFolder.endsWith('-main')) return { git: CODER_BLOCKED_GIT, gh: [] };
   return { git: DEFAULT_BLOCKED_GIT, gh: DEFAULT_BLOCKED_GH };
@@ -430,7 +511,12 @@ function getGitBlocklist(groupFolder: string): { git: RegExp[]; gh: RegExp[] } {
 
 const GIT_AUDIT_FILE = '/workspace/group/git-audit.log';
 
-function auditGitCommand(command: string, blocked: boolean, group: string, reason?: string): void {
+function auditGitCommand(
+  command: string,
+  blocked: boolean,
+  group: string,
+  reason?: string,
+): void {
   try {
     const entry = JSON.stringify({
       timestamp: new Date().toISOString(),
@@ -440,7 +526,9 @@ function auditGitCommand(command: string, blocked: boolean, group: string, reaso
       ...(reason ? { reason } : {}),
     });
     fs.appendFileSync(GIT_AUDIT_FILE, entry + '\n');
-  } catch { /* audit is best-effort */ }
+  } catch {
+    /* audit is best-effort */
+  }
 }
 
 function createGitSafetyHook(groupFolder: string): HookCallback {
@@ -461,6 +549,11 @@ function createGitSafetyHook(groupFolder: string): HookCallback {
         const reason = `Blocked: destructive git operation not permitted for ${groupFolder}`;
         auditGitCommand(command, true, groupFolder, reason);
         log(`[GIT-SAFETY] ${reason}: ${command.slice(0, 200)}`);
+        emitTraceEvent('hook-block', {
+          hook: 'git-safety',
+          group: groupFolder,
+          commandPrefix: command.slice(0, 100),
+        });
         return {
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
@@ -555,9 +648,12 @@ function parseTranscript(content: string): ParsedMessage[] {
     try {
       const entry = JSON.parse(line);
       if (entry.type === 'user' && entry.message?.content) {
-        const text = typeof entry.message.content === 'string'
-          ? entry.message.content
-          : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
+        const text =
+          typeof entry.message.content === 'string'
+            ? entry.message.content
+            : entry.message.content
+                .map((c: { text?: string }) => c.text || '')
+                .join('');
         if (text) messages.push({ role: 'user', content: text });
       } else if (entry.type === 'assistant' && entry.message?.content) {
         const textParts = entry.message.content
@@ -566,22 +662,26 @@ function parseTranscript(content: string): ParsedMessage[] {
         const text = textParts.join('');
         if (text) messages.push({ role: 'assistant', content: text });
       }
-    } catch {
-    }
+    } catch {}
   }
 
   return messages;
 }
 
-function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
+function formatTranscriptMarkdown(
+  messages: ParsedMessage[],
+  title?: string | null,
+  assistantName?: string,
+): string {
   const now = new Date();
-  const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
+  const formatDateTime = (d: Date) =>
+    d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
 
   const lines: string[] = [];
   lines.push(`# ${title || 'Conversation'}`);
@@ -592,10 +692,11 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
   lines.push('');
 
   for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : (assistantName || 'Assistant');
-    const content = msg.content.length > 2000
-      ? msg.content.slice(0, 2000) + '...'
-      : msg.content;
+    const sender = msg.role === 'user' ? 'User' : assistantName || 'Assistant';
+    const content =
+      msg.content.length > 2000
+        ? msg.content.slice(0, 2000) + '...'
+        : msg.content;
     lines.push(`**${sender}**: ${content}`);
     lines.push('');
   }
@@ -608,7 +709,11 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
  */
 function shouldClose(): boolean {
   if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
+    } catch {
+      /* ignore */
+    }
     return true;
   }
   return false;
@@ -621,8 +726,9 @@ function shouldClose(): boolean {
 function drainIpcInput(): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
+    const files = fs
+      .readdirSync(IPC_INPUT_DIR)
+      .filter((f) => f.endsWith('.json'))
       .sort();
 
     const messages: string[] = [];
@@ -635,8 +741,14 @@ function drainIpcInput(): string[] {
           messages.push(data.text);
         }
       } catch (err) {
-        log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+        log(
+          `Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          /* ignore */
+        }
       }
     }
     return messages;
@@ -681,7 +793,22 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<{
+  newSessionId?: string;
+  lastAssistantUuid?: string;
+  closedDuringQuery: boolean;
+}> {
+  const queryStartTime = Date.now();
+  const hasTraceContext = !!containerInput.traceContext;
+
+  if (hasTraceContext) {
+    emitTraceEvent('query-start', {
+      iteration: sessionId ? 'resume' : 'initial',
+      promptLength: prompt.length,
+      hasSession: !!sessionId,
+    });
+  }
+
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -738,7 +865,9 @@ async function runQuery(
   const knownSecrets = buildSecretValues(containerInput.secrets);
   const external = isExternalProvider(sdkEnv);
   if (external) {
-    log(`[SECRET-SCANNER] External provider detected — secret scanning ACTIVE (${knownSecrets.size} known values)`);
+    log(
+      `[SECRET-SCANNER] External provider detected — secret scanning ACTIVE (${knownSecrets.size} known values)`,
+    );
   }
 
   for await (const message of query({
@@ -749,18 +878,33 @@ async function runQuery(
       resume: sessionId,
       resumeSessionAt: resumeAt,
       systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+        ? {
+            type: 'preset' as const,
+            preset: 'claude_code' as const,
+            append: globalClaudeMd,
+          }
         : undefined,
       allowedTools: [
         'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
+        'Read',
+        'Write',
+        'Edit',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        'Task',
+        'TaskOutput',
+        'TaskStop',
+        'TeamCreate',
+        'TeamDelete',
+        'SendMessage',
+        'TodoWrite',
+        'ToolSearch',
+        'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__ollama__*'
+        'mcp__ollama__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -782,18 +926,35 @@ async function runQuery(
         },
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreCompact: [
+          { hooks: [createPreCompactHook(containerInput.assistantName)] },
+        ],
         PreToolUse: [
-          { matcher: 'Bash', hooks: [createSanitizeBashHook(), createGitSafetyHook(containerInput.groupFolder)] },
-          { matcher: 'Write', hooks: [createProtectedPathHook(containerInput.groupFolder)] },
-          { matcher: 'Edit', hooks: [createProtectedPathHook(containerInput.groupFolder)] },
+          {
+            matcher: 'Bash',
+            hooks: [
+              createSanitizeBashHook(),
+              createGitSafetyHook(containerInput.groupFolder),
+            ],
+          },
+          {
+            matcher: 'Write',
+            hooks: [createProtectedPathHook(containerInput.groupFolder)],
+          },
+          {
+            matcher: 'Edit',
+            hooks: [createProtectedPathHook(containerInput.groupFolder)],
+          },
           { hooks: [createSecretScannerHook(knownSecrets, external)] },
         ],
       },
-    }
+    },
   })) {
     messageCount++;
-    const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
+    const msgType =
+      message.type === 'system'
+        ? `system/${(message as { subtype?: string }).subtype}`
+        : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
@@ -803,27 +964,55 @@ async function runQuery(
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
+      if (hasTraceContext) {
+        emitTraceEvent('session-init', { sessionId: newSessionId });
+      }
     }
 
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
-      const tn = message as { task_id: string; status: string; summary: string };
-      log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
+    if (
+      message.type === 'system' &&
+      (message as { subtype?: string }).subtype === 'task_notification'
+    ) {
+      const tn = message as {
+        task_id: string;
+        status: string;
+        summary: string;
+      };
+      log(
+        `Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`,
+      );
     }
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const textResult =
+        'result' in message ? (message as { result?: string }).result : null;
+      log(
+        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+      );
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
       });
     }
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
+
+  const queryDurationMs = Date.now() - queryStartTime;
+  if (hasTraceContext) {
+    emitTraceEvent('query-end', {
+      durationMs: queryDurationMs,
+      messageCount,
+      resultCount,
+      closedDuringQuery,
+    });
+  }
+
+  log(
+    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
+  );
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
@@ -834,13 +1023,37 @@ async function main(): Promise<void> {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
     // Delete the temp file the entrypoint wrote — it contains secrets
-    try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
+    try {
+      fs.unlinkSync('/tmp/input.json');
+    } catch {
+      /* may not exist */
+    }
+    // Recover trace context: prefer stdin JSON, fall back to env var
+    if (!containerInput.traceContext && process.env.NANOCLAW_TRACE_CONTEXT) {
+      try {
+        containerInput.traceContext = JSON.parse(
+          process.env.NANOCLAW_TRACE_CONTEXT,
+        );
+      } catch {
+        /* ignore malformed trace context */
+      }
+    }
+    if (containerInput.traceContext) {
+      log(
+        `Trace context: traceId=${containerInput.traceContext.traceId} source=${containerInput.traceContext.source}`,
+      );
+      emitTraceEvent('agent-start', {
+        traceId: containerInput.traceContext.traceId,
+        source: containerInput.traceContext.source,
+        groupFolder: containerInput.groupFolder,
+      });
+    }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
       status: 'error',
       result: null,
-      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`
+      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`,
     });
     process.exit(1);
   }
@@ -859,7 +1072,11 @@ async function main(): Promise<void> {
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
   // Clean up stale _close sentinel from previous container runs
-  try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  try {
+    fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
+  } catch {
+    /* ignore */
+  }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
@@ -876,9 +1093,18 @@ async function main(): Promise<void> {
   let resumeAt: string | undefined;
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
+      log(
+        `Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`,
+      );
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(
+        prompt,
+        sessionId,
+        mcpServerPath,
+        containerInput,
+        sdkEnv,
+        resumeAt,
+      );
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -912,11 +1138,16 @@ async function main(): Promise<void> {
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Agent error: ${errorMessage}`);
+    if (containerInput.traceContext) {
+      emitTraceEvent('agent-error', {
+        error: errorMessage.slice(0, 500),
+      });
+    }
     writeOutput({
       status: 'error',
       result: null,
       newSessionId: sessionId,
-      error: errorMessage
+      error: errorMessage,
     });
     process.exit(1);
   }

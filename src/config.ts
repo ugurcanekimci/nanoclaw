@@ -110,3 +110,20 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// ── Langfuse observability config ──
+
+export const LANGFUSE_ENABLED =
+  (process.env.LANGFUSE_ENABLED || 'false').toLowerCase() === 'true';
+export const LANGFUSE_PUBLIC_KEY = process.env.LANGFUSE_PUBLIC_KEY || '';
+export const LANGFUSE_SECRET_KEY = process.env.LANGFUSE_SECRET_KEY || '';
+export const LANGFUSE_BASEURL =
+  process.env.LANGFUSE_BASEURL || 'http://localhost:3000';
+export const LANGFUSE_SAMPLE_RATE = Math.min(
+  1,
+  Math.max(0, parseFloat(process.env.LANGFUSE_SAMPLE_RATE || '1.0')),
+);
+export const LANGFUSE_CAPTURE_PROMPTS =
+  (process.env.LANGFUSE_CAPTURE_PROMPTS || 'false').toLowerCase() === 'true';
+export const LANGFUSE_CAPTURE_TOOL_IO =
+  (process.env.LANGFUSE_CAPTURE_TOOL_IO || 'false').toLowerCase() === 'true';
