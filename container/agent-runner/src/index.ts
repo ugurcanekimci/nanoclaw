@@ -955,7 +955,26 @@ async function runQuery(
       message.type === 'system'
         ? `system/${(message as { subtype?: string }).subtype}`
         : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
+    // ── Enhanced logging: show what the agent is actually doing ──
+    let detail = '';
+    if (message.type === 'assistant' && 'message' in message) {
+      const msg = message as { message?: { content?: Array<{ type: string; name?: string; text?: string }> } };
+      const blocks = msg.message?.content || [];
+      const tools = blocks.filter((b) => b.type === 'tool_use').map((b) => b.name);
+      const textBlocks = blocks.filter((b) => b.type === 'text').map((b) => (b.text || '').slice(0, 120));
+      if (tools.length > 0) detail = ` tools=[${tools.join(', ')}]`;
+      else if (textBlocks.length > 0) detail = ` text="${textBlocks[0]}"`;
+    } else if (message.type === 'user' && 'message' in message) {
+      const msg = message as { message?: { content?: string | Array<{ type: string; tool_use_id?: string }> } };
+      const content = msg.message?.content;
+      if (Array.isArray(content)) {
+        const toolResults = content.filter((b) => b.type === 'tool_result');
+        if (toolResults.length > 0) detail = ` tool_results=${toolResults.length}`;
+      } else if (typeof content === 'string') {
+        detail = ` text="${content.slice(0, 120)}"`;
+      }
+    }
+    log(`[msg #${messageCount}] type=${msgType}${detail}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;

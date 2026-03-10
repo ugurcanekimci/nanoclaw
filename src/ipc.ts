@@ -174,7 +174,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 const authorized =
                   isMain ||
                   (targetGroup !== undefined &&
-                    targetGroup.folder === sourceGroup);
+                    targetGroup.folder === sourceGroup) ||
+                  (targetGroup !== undefined && targetGroup.isMain);
 
                 if (trace) {
                   trace.event({
@@ -184,7 +185,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       reason: authorized
                         ? isMain
                           ? 'main-group'
-                          : 'own-channel'
+                          : targetGroup?.folder === sourceGroup
+                            ? 'own-channel'
+                            : 'report-to-main'
                         : 'unauthorized',
                     },
                   });

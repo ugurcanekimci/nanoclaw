@@ -66,7 +66,17 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
-      logger.debug({ groupJid }, 'Container active, message queued');
+      if (state.idleWaiting) {
+        // Container finished its turn but is still alive waiting for IPC.
+        // Close it so drainGroup() respawns with the new messages.
+        logger.debug(
+          { groupJid },
+          'Container idle, closing to process new messages',
+        );
+        this.closeStdin(groupJid);
+      } else {
+        logger.debug({ groupJid }, 'Container active, message queued');
+      }
       return;
     }
 
