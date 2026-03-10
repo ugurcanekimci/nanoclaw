@@ -129,33 +129,17 @@ echo "[4/5] Pre-seeding group configs..."
 bash "$SWARM_DIR/scripts/setup-groups.sh" "$NANOCLAW_DIR"
 echo ""
 
-# ─── Step 5: Docker Services + NanoClaw ──────────────────────────────
+# ─── Step 5: NanoClaw ────────────────────────────────────────────────
 
-echo "[5/5] Starting Docker services..."
+echo "[5/5] Starting NanoClaw..."
 
-cd "$SWARM_DIR"
-
-# Start Crawl4AI if not running
-if docker ps --format '{{.Names}}' | grep -q 'crawl4ai'; then
-  echo "  Crawl4AI already running"
-else
-  echo "  Starting Crawl4AI..."
-  docker run -d --name crawl4ai -p 11235:11235 --restart unless-stopped \
-    unclecode/crawl4ai:latest 2>/dev/null || \
-  docker start crawl4ai 2>/dev/null || \
-  echo "  WARNING: Could not start Crawl4AI (run docker pull unclecode/crawl4ai:latest first)"
-fi
-
-echo ""
+# Crawl4AI is on-demand only (docker compose --profile scraping up crawl4ai -d)
 
 if lsof -nP -iTCP:"$PORT_VALUE" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "  WARNING: Port $PORT_VALUE is already in use."
-  echo "  NanoClaw will continue and skip its embedded API if another Swarm API is already listening."
-  lsof -nP -iTCP:"$PORT_VALUE" -sTCP:LISTEN || true
+  echo "  NOTE: Port $PORT_VALUE is already in use."
+  echo "  NanoClaw will skip its embedded Swarm API."
   echo ""
 fi
-
-echo "Starting NanoClaw..."
 echo ""
 echo "═══════════════════════════════════════════════════"
 echo "  Swarm stack ready. NanoClaw starting below."

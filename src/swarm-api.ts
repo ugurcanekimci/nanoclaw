@@ -1,3 +1,4 @@
+import * as net from 'node:net';
 import { serve } from '@hono/node-server';
 
 import { config } from './config.js';
@@ -9,25 +10,39 @@ export interface SwarmApiHandle {
   close(): void;
 }
 
-export function startSwarmApi(): SwarmApiHandle {
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net
+      .createServer()
+      .once('error', () => resolve(false))
+      .once('listening', () => {
+        tester.close(() => resolve(true));
+      })
+      .listen(port);
+  });
+}
+
+export async function startSwarmApi(): Promise<SwarmApiHandle> {
+  const port = config.port;
+
+  const available = await isPortAvailable(port);
+  if (!available) {
+    logger.warn(
+      { port },
+      'Swarm API port already in use; continuing without embedded API',
+    );
+    return { close() {} };
+  }
+
   let isListening = false;
-  const server = serve({ fetch: api.fetch, port: config.port }, (info) => {
+  const server = serve({ fetch: api.fetch, port }, (info) => {
     isListening = true;
     logger.info({ port: info.port }, 'Swarm API listening');
     startScheduler();
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
-      logger.warn(
-        { port: config.port },
-        'Swarm API port already in use; continuing without embedded API',
-      );
-      return;
-    }
-
-    logger.error({ err, port: config.port }, 'Swarm API server error');
-    throw err;
+    logger.error({ err, port }, 'Swarm API server error');
   });
 
   return {

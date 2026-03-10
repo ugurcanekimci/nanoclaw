@@ -454,7 +454,7 @@ async function main(): Promise<void> {
 
   // ── Swarm API (secondary service) ──
 
-  const swarmApi = startSwarmApi();
+  const swarmApi = await startSwarmApi();
 
   logger.info('NanoClaw runtime started');
 
