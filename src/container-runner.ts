@@ -197,7 +197,9 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+  // Always sync from source so host-side updates (e.g. OBS fix-005)
+  // propagate to containers without manual cleanup.
+  if (fs.existsSync(agentRunnerSrc)) {
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }
   mounts.push({
@@ -479,8 +481,7 @@ export async function runContainerAgent(
             if (evt.name === 'result-usage') {
               agentModel = evt.metadata.model as string;
               agentInputTokens += (evt.metadata.inputTokens as number) || 0;
-              agentOutputTokens +=
-                (evt.metadata.outputTokens as number) || 0;
+              agentOutputTokens += (evt.metadata.outputTokens as number) || 0;
             }
             if (lifecycleSpan) {
               lifecycleSpan.event({
